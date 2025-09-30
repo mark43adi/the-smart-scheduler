@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Scheduler - AI Meeting Assistant</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                    <rect width="32" height="32" rx="8" fill="#6366f1"/>
+                    <path d="M16 8v8l5.66 3.37" stroke="white" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                <h1>Smart Scheduler</h1>
+            </div>
+            <div class="user-info">
+                <img id="userAvatar" src="" alt="User" class="avatar" style="display: none;">
+                <span id="userName" class="user-name"></span>
+                <button id="logoutBtn" class="btn-logout" style="display: none;">Logout</button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Context Display -->
+            <div class="context-card">
+                <div class="context-icon">📅</div>
+                <div class="context-info">
+                    <div id="currentTime" class="context-time">Loading...</div>
+                    <div id="currentDate" class="context-date">Loading...</div>
+                </div>
+            </div>
+
+            <!-- Chat Container -->
+            <div class="chat-container">
+                <div id="chatMessages" class="chat-messages">
+                    <div class="welcome-message">
+                        <h2>👋 Welcome to Smart Scheduler!</h2>
+                        <p>I'm your AI scheduling assistant. You can:</p>
+                        <ul>
+                            <li>📅 Schedule meetings with voice or text</li>
+                            <li>🔍 Check your availability</li>
+                            <li>📧 Invite guests to meetings</li>
+                            <li>⏰ Find the perfect time for your next meeting</li>
+                        </ul>
+                        <p class="tip">Try saying: "Schedule a 1-hour meeting tomorrow afternoon"</p>
+                    </div>
+                </div>
+
+                <!-- Input Area -->
+                <div class="input-area">
+                    <button id="voiceBtn" class="btn-voice" title="Hold to speak">
+                        <svg id="micIcon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                            <line x1="12" y1="19" x2="12" y2="23"></line>
+                            <line x1="8" y1="23" x2="16" y2="23"></line>
+                        </svg>
+                        <span class="voice-status">Hold to speak</span>
+                    </button>
+                    <input 
+                        type="text" 
+                        id="messageInput" 
+                        class="message-input" 
+                        placeholder="Type your message or click mic to speak..."
+                    >
+                    <button id="sendBtn" class="btn-send">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Voice Indicator -->
+                <div id="voiceIndicator" class="voice-indicator" style="display: none;">
+                    <div class="voice-wave"></div>
+                    <div class="voice-wave"></div>
+                    <div class="voice-wave"></div>
+                    <span>Listening...</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- Loading Overlay -->
+        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+            <div class="spinner"></div>
+            <p>Processing...</p>
+        </div>
+    </div>
+
+    <script src="js/auth.js"></script>
+    <script src="js/voice.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

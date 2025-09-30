@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+langchain
+langchain-core
+langchain-google-genai
+langchain-openai
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+sqlalchemy
+pyjwt
+aiohttp
+pytz
+python-multipart
