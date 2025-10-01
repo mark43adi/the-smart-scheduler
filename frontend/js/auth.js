@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:8080';
+const API_URL = 'http://34.133.159.102:8080';
 
 class AuthManager {
     constructor() {
