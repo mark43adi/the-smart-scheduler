@@ -44,7 +44,7 @@ app.add_middleware(
 )
 
 # Mount auth routes
-app.include_router(auth_router)
+app.include_router(auth_router, prefix="/api")
 
 # Initialize agent
 agent = SmartSchedulerAgent()
@@ -238,8 +238,8 @@ async def startup_event():
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host=config.HOST,
-        port=config.PORT,
-        reload=True,
+        host="0.0.0.0",   # listen on all interfaces
+        port=8080,        # backend port (Nginx will proxy to this)
+        reload=False,     # disable reload in production
         log_level="info"
     )

@@ -70,7 +70,7 @@ class SmartSchedulerApp {
 
     async updateContext() {
         try {
-            const response = await fetch(`${API_URL}/api/context`, {
+            const response = await fetch(`${API_URL}/context`, {
                 headers: authManager.getAuthHeaders()
             });
 
@@ -111,7 +111,7 @@ class SmartSchedulerApp {
                 requestBody.session_id = this.sessionId;
             }
 
-            const response = await fetch(`${API_URL}/api/chat`, {
+            const response = await fetch(`${API_URL}/chat`, {
                 method: 'POST',
                 headers: authManager.getAuthHeaders(),
                 body: JSON.stringify(requestBody)
