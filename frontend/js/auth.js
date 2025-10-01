@@ -1,4 +1,4 @@
-const API_URL = 'https://34.133.159.102:8080';
+const API_URL = 'https://34-133-159-102.nip.io/api';
 
 class AuthManager {
     constructor() {
