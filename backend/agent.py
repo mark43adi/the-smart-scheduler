@@ -1,6 +1,6 @@
 import json
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 from llm import get_llm, SYSTEM_PROMPT
@@ -107,18 +107,35 @@ class SmartSchedulerAgent:
         
         return self.sessions[session_id]
 
+    
+
     def get_current_context(self) -> str:
         """Get current date/time context for LLM"""
         tz = pytz.timezone(config.DEFAULT_TIMEZONE)
         now = datetime.now(tz)
         
+        # Calculate helpful reference dates
+        tomorrow = now + timedelta(days=1)
+        day_after = now + timedelta(days=2)
+        
+        # Find next Monday
+        days_until_monday = (7 - now.weekday()) % 7
+        if days_until_monday == 0:
+            days_until_monday = 7
+        next_monday = now + timedelta(days=days_until_monday)
+        
         return f"""
-CURRENT CONTEXT (User's Timezone: {config.DEFAULT_TIMEZONE}):
-- Current Date & Time: {now.strftime('%A, %B %d, %Y at %I:%M %p')}
-- Day: {now.strftime('%A')}
-- Date: {now.strftime('%Y-%m-%d')}
-- Time: {now.strftime('%I:%M %p')}
-"""
+    CURRENT CONTEXT (User's Timezone: {config.DEFAULT_TIMEZONE}):
+    - Current Date & Time: {now.strftime('%A, %B %d, %Y at %I:%M %p')}
+    - Today: {now.strftime('%A, %Y-%m-%d')}
+    - Tomorrow: {tomorrow.strftime('%A, %Y-%m-%d')}
+    - Day After Tomorrow: {day_after.strftime('%A, %Y-%m-%d')}
+    - Next Monday: {next_monday.strftime('%Y-%m-%d')}
+    - Current Week: Week of {now.strftime('%B %d, %Y')}
+
+    Use these dates to convert relative time expressions into YYYY-MM-DD format for tools.
+    """
+
 
     def _enrich_user_message(self, user_message: str, state: ConversationState) -> str:
         """
