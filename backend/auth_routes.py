@@ -99,7 +99,7 @@ async def auth_callback(code: str, db: Session = Depends(get_db)):
         access_token = create_access_token(data={"sub": user.id, "email": user.email})
         
         # Redirect to frontend with token
-        frontend_url = f"http://34-133-159-102.nip.io:3000/?token={access_token}"
+        frontend_url = f"https://34-133-159-102.nip.io:3000/?token={access_token}"
         return RedirectResponse(url=frontend_url)
     
     except Exception as e:
