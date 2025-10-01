@@ -31,7 +31,8 @@ except Exception as e:
 app = FastAPI(
     title="Smart Scheduler AI Agent",
     description="Intelligent voice-enabled scheduling assistant with Google Calendar integration",
-    version="2.0.0"
+    version="2.0.0",
+    root_path="/api"
 )
 
 # CORS middleware
@@ -44,7 +45,7 @@ app.add_middleware(
 )
 
 # Mount auth routes
-app.include_router(auth_router, prefix="/api")
+app.include_router(auth_router)
 
 # Initialize agent
 agent = SmartSchedulerAgent()
