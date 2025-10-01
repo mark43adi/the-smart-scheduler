@@ -1,4 +1,4 @@
-const API_URL = 'https://34-133-159-102.nip.io/api';
+const API_URL = 'https://34-133-159-102.nip.io';
 
 class AuthManager {
     constructor() {
@@ -27,7 +27,7 @@ class AuthManager {
         // Verify token and get user info
         if (this.token) {
             try {
-                const response = await fetch(`${API_URL}/auth/me`, {
+                const response = await fetch(`${API_URL}/api/auth/me`, {
                     headers: {
                         'Authorization': `Bearer ${this.token}`
                     }

@@ -60,11 +60,11 @@
     </div>
 
     <script>
-        const API_URL = 'https://34-133-159-102.nip.io/api';
+        const API_URL = 'https://34-133-159-102.nip.io';
 
         document.getElementById('googleLoginBtn').addEventListener('click', async () => {
             try {
-                const response = await fetch(`${API_URL}/auth/login`);
+                const response = await fetch(`${API_URL}/api/auth/login`);
                 const data = await response.json();
                 
                 if (data.auth_url) {
