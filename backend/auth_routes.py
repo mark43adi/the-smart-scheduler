@@ -6,6 +6,7 @@ from googleapiclient.discovery import build
 from sqlalchemy.orm import Session
 import uuid
 from datetime import datetime
+import os
 
 from config import config
 from database import User, get_db
@@ -98,9 +99,13 @@ async def auth_callback(code: str, db: Session = Depends(get_db)):
         # Create JWT token
         access_token = create_access_token(data={"sub": user.id, "email": user.email})
         
-        # Redirect to frontend with token
-        frontend_url = f"http://localhost:3000?token={access_token}"  # Fixed URL
-        return RedirectResponse(url=frontend_url)
+        # FIXED: Redirect to GCP domain, not localhost
+        # Get the frontend URL from environment or use the domain
+        frontend_url = os.getenv('FRONTEND_URL', 'https://34-133-159-102.nip.io')
+        redirect_url = f"{frontend_url}?token={access_token}"
+        
+        logger.info(f"Redirecting to: {redirect_url}")
+        return RedirectResponse(url=redirect_url)
     
     except Exception as e:
         logger.error(f"Auth callback error: {str(e)}", exc_info=True)

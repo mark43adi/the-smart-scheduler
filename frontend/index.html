@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <link rel="icon" href="data:,">
@@ -27,7 +28,7 @@
             width: 100%;
             background: white;
             border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             overflow: hidden;
         }
 
@@ -58,7 +59,7 @@
             font-size: 14px;
             padding: 8px 15px;
             border-radius: 20px;
-            background: rgba(255,255,255,0.2);
+            background: rgba(255, 255, 255, 0.2);
         }
 
         .status.connected {
@@ -109,6 +110,7 @@
                 opacity: 0;
                 transform: translateY(10px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
@@ -140,7 +142,7 @@
             background: white;
             padding: 15px;
             border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
         .partial-transcript {
@@ -155,8 +157,15 @@
         }
 
         @keyframes pulse {
-            0%, 100% { opacity: 0.6; }
-            50% { opacity: 1; }
+
+            0%,
+            100% {
+                opacity: 0.6;
+            }
+
+            50% {
+                opacity: 1;
+            }
         }
 
         .thinking-indicator {
@@ -191,9 +200,13 @@
         }
 
         @keyframes bounce {
-            0%, 80%, 100% {
+
+            0%,
+            80%,
+            100% {
                 transform: scale(0);
             }
+
             40% {
                 transform: scale(1);
             }
@@ -221,9 +234,11 @@
             0% {
                 box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
             }
+
             70% {
                 box-shadow: 0 0 0 10px rgba(244, 67, 54, 0);
             }
+
             100% {
                 box-shadow: 0 0 0 0 rgba(244, 67, 54, 0);
             }
@@ -310,26 +325,27 @@
 
         .btn-logout {
             padding: 8px 16px;
-            background: rgba(255,255,255,0.2);
+            background: rgba(255, 255, 255, 0.2);
             color: white;
-            border: 1px solid rgba(255,255,255,0.3);
+            border: 1px solid rgba(255, 255, 255, 0.3);
             border-radius: 20px;
             cursor: pointer;
             font-size: 14px;
         }
 
         .btn-logout:hover {
-            background: rgba(255,255,255,0.3);
+            background: rgba(255, 255, 255, 0.3);
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <header class="header">
             <div class="logo">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                    <rect width="32" height="32" rx="8" fill="rgba(255,255,255,0.2)"/>
-                    <path d="M16 8v8l5.66 3.37" stroke="white" stroke-width="2" stroke-linecap="round"/>
+                    <rect width="32" height="32" rx="8" fill="rgba(255,255,255,0.2)" />
+                    <path d="M16 8v8l5.66 3.37" stroke="white" stroke-width="2" stroke-linecap="round" />
                 </svg>
                 <h1>Smart Scheduler AI</h1>
             </div>
@@ -367,12 +383,15 @@
 
     <!-- Load scripts in correct order -->
     <script>
-        // Global API URL configuration
-        const API_URL =  'http://localhost:8080/api';
-        console.log('API URL:', API_URL);
+        window.CONFIG = {
+            API_URL: "/api",  // relative URL (works in GCP deployment via Nginx proxy)
+            WS_URL: `wss://${window.location.host}/ws/voice`, // WebSocket endpoint
+            AUTH_URL: "/api/auth"
+        };
     </script>
     <script src="js/auth.js"></script>
     <script src="js/ws-voice.js"></script>
     <script src="js/app.js"></script>
 </body>
+
 </html>

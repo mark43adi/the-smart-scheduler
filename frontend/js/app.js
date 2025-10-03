@@ -1,11 +1,19 @@
+// js/app.js - Updated to use CONFIG
+
 class SmartSchedulerApp {
     constructor() {
         this.sessionId = null;
         this.isProcessing = false;
-        this.voiceMode = 'websocket'; // 'websocket' or 'traditional'
+        this.voiceMode = 'websocket';
     }
 
     async initialize() {
+        // Wait for CONFIG to be available
+        if (!window.CONFIG) {
+            console.error('CONFIG not loaded');
+            return;
+        }
+
         // Initialize auth
         const authenticated = await authManager.initialize();
         if (!authenticated) return;
@@ -19,7 +27,7 @@ class SmartSchedulerApp {
         // Setup event listeners
         this.setupEventListeners();
 
-        // Check if user prefers voice mode
+        // Setup voice mode
         this.setupVoiceMode();
     }
 
@@ -36,7 +44,7 @@ class SmartSchedulerApp {
             };
         }
 
-        // Optional: Text input fallback (if you want to keep it)
+        // Optional: Text input fallback
         const messageInput = document.getElementById('messageInput');
         const sendBtn = document.getElementById('sendBtn');
         
@@ -95,7 +103,7 @@ class SmartSchedulerApp {
                 requestBody.session_id = this.sessionId;
             }
 
-            const response = await fetch(`${API_URL}/chat`, {
+            const response = await fetch(`${window.CONFIG.API_URL}/chat`, {
                 method: 'POST',
                 headers: authManager.getAuthHeaders(),
                 body: JSON.stringify(requestBody)

@@ -6,6 +6,8 @@ class WebSocketVoiceManager {
         this.sourceNode = null;
         this.isConnected = false;
         this.isSpeaking = false;
+        this.lastSpeechEndTime = null;
+        this.responseStartTime = null;
 
         // Audio accumulation for complete playback
         this.audioChunks = [];
@@ -130,6 +132,49 @@ class WebSocketVoiceManager {
         this.updateRecordingUI(false);
     }
 
+    // async handleMessage(message) {
+    //     switch (message.type) {
+    //         case 'connected':
+    //             this.showStatus('Connected! Start speaking...');
+    //             break;
+
+    //         case 'partial_transcript':
+    //             this.showPartialTranscript(message.text);
+    //             break;
+
+    //         case 'transcript':
+    //             this.addMessage(message.text, 'user');
+    //             this.clearPartialTranscript();
+    //             break;
+
+    //         case 'thinking':
+    //             this.showThinking();
+    //             break;
+
+    //         case 'response_text':
+    //             this.addMessage(message.text, 'assistant', message.tools_used);
+    //             this.hideThinking();
+    //             break;
+
+    //         case 'audio_complete':
+    //             console.log('🔊 Audio streaming complete, playing accumulated audio');
+    //             await this.playAccumulatedAudio();
+    //             break;
+
+    //         case 'ready':
+    //             this.showStatus('Ready');
+    //             this.isSpeaking = false;
+    //             break;
+
+    //         case 'error':
+    //             this.showError(message.message);
+    //             break;
+
+    //         default:
+    //             console.debug('Message:', message);
+    //     }
+    // }
+
     async handleMessage(message) {
         switch (message.type) {
             case 'connected':
@@ -143,6 +188,8 @@ class WebSocketVoiceManager {
             case 'transcript':
                 this.addMessage(message.text, 'user');
                 this.clearPartialTranscript();
+                // mark when user finished speaking (approx)
+                this.lastSpeechEndTime = Date.now();
                 break;
 
             case 'thinking':
@@ -154,14 +201,33 @@ class WebSocketVoiceManager {
                 this.hideThinking();
                 break;
 
+            case 'audio_start':
+                this.responseStartTime = Date.now();
+                if (this.lastSpeechEndTime) {
+                    const latency = this.responseStartTime - this.lastSpeechEndTime;
+                    console.log(`⏱️ Latency (speech_end → audio_start): ${latency} ms`);
+                }
+                console.log('🔊 AI starting to speak');
+                this.isSpeaking = true;
+                break;
+
             case 'audio_complete':
                 console.log('🔊 Audio streaming complete, playing accumulated audio');
+                const endTime = Date.now();
+                if (this.responseStartTime) {
+                    const playbackLatency = endTime - this.responseStartTime;
+                    console.log(`⏱️ AI streaming duration: ${playbackLatency} ms`);
+                }
                 await this.playAccumulatedAudio();
                 break;
 
             case 'ready':
                 this.showStatus('Ready');
                 this.isSpeaking = false;
+                if (this.lastSpeechEndTime) {
+                    const totalLatency = Date.now() - this.lastSpeechEndTime;
+                    console.log(`✅ End-to-End Latency (speech_end → ready): ${totalLatency} ms`);
+                }
                 break;
 
             case 'error':
@@ -172,6 +238,7 @@ class WebSocketVoiceManager {
                 console.debug('Message:', message);
         }
     }
+
 
     // 🔊 Handle MP3 audio from ElevenLabs
     async handleAudioChunk(audioData) {
@@ -192,7 +259,7 @@ class WebSocketVoiceManager {
 
         try {
             console.log(`🔊 Playing accumulated audio (${this.audioChunks.length} chunks)`);
-            
+
             // Combine all chunks into one complete MP3
             const totalLength = this.audioChunks.reduce((sum, chunk) => {
                 const buffer = chunk instanceof ArrayBuffer ? chunk : chunk.buffer;

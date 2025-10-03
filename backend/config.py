@@ -10,6 +10,8 @@ class Config:
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     # LLM Configuration
     
+    
+    
     LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")  # gemini or openai
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

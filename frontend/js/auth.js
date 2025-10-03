@@ -1,4 +1,5 @@
-// Authentication Manager
+// js/auth.js - Updated to use CONFIG
+
 class AuthManager {
     constructor() {
         this.token = null;
@@ -35,14 +36,14 @@ class AuthManager {
             }
         }
 
-        // No valid auth - show login page instead of redirecting
+        // No valid auth - show login page
         this.showLoginPage();
         return false;
     }
 
     async fetchUserInfo() {
         try {
-            const response = await fetch(`${API_URL}/auth/me`, {
+            const response = await fetch(`${window.CONFIG.AUTH_URL}/me`, {
                 headers: this.getAuthHeaders()
             });
 
@@ -121,6 +122,95 @@ class AuthManager {
             </div>
         `;
 
+        // Add login page styles
+        const style = document.createElement('style');
+        style.textContent = `
+            .login-container {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                padding: 20px;
+            }
+            .login-card {
+                background: white;
+                border-radius: 20px;
+                max-width: 500px;
+                width: 100%;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                overflow: hidden;
+            }
+            .login-header {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 40px;
+                text-align: center;
+                color: white;
+            }
+            .login-header h1 {
+                margin: 20px 0 10px;
+                font-size: 28px;
+            }
+            .login-header p {
+                opacity: 0.9;
+                font-size: 16px;
+            }
+            .login-body {
+                padding: 40px;
+            }
+            .login-body h2 {
+                margin-bottom: 10px;
+                color: #333;
+            }
+            .login-body > p {
+                color: #666;
+                margin-bottom: 30px;
+            }
+            .btn-google {
+                width: 100%;
+                padding: 15px;
+                background: white;
+                border: 2px solid #e0e0e0;
+                border-radius: 8px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 12px;
+                font-size: 16px;
+                font-weight: 600;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+            .btn-google:hover {
+                border-color: #4285F4;
+                box-shadow: 0 2px 8px rgba(66,133,244,0.2);
+            }
+            .features {
+                margin-top: 40px;
+                display: flex;
+                flex-direction: column;
+                gap: 20px;
+            }
+            .feature {
+                display: flex;
+                align-items: center;
+                gap: 15px;
+            }
+            .feature-icon {
+                font-size: 32px;
+                width: 50px;
+                text-align: center;
+            }
+            .feature-text h3 {
+                font-size: 16px;
+                color: #333;
+                margin-bottom: 5px;
+            }
+            .feature-text p {
+                font-size: 14px;
+                color: #666;
+            }
+        `;
+        document.head.appendChild(style);
         document.body.appendChild(loginPage);
 
         // Add click handler
@@ -131,7 +221,7 @@ class AuthManager {
 
     async initiateGoogleLogin() {
         try {
-            const response = await fetch(`${API_URL}/auth/login`);
+            const response = await fetch(`${window.CONFIG.AUTH_URL}/login`);
             const data = await response.json();
             
             if (data.auth_url) {
