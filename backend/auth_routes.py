@@ -99,13 +99,14 @@ async def auth_callback(code: str, db: Session = Depends(get_db)):
         access_token = create_access_token(data={"sub": user.id, "email": user.email})
         
         # Redirect to frontend with token
-        frontend_url = f"https://34-133-159-102.nip.io/?token={access_token}"
+        frontend_url = f"http://localhost:3000?token={access_token}"  # Fixed URL
         return RedirectResponse(url=frontend_url)
     
     except Exception as e:
         logger.error(f"Auth callback error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
-
+    
+    
 @router.get("/me")
 async def get_me(user: User = Depends(get_current_user)):
     """Get current user info"""

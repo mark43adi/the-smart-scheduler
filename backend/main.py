@@ -106,6 +106,47 @@ async def health():
         "active_sessions": len(agent.sessions)
     }
 
+
+
+# Add this to main.py
+
+from fastapi import WebSocket
+from ws_voice_handler import VoiceStreamHandler
+
+@app.websocket("/ws/voice")
+async def websocket_voice_endpoint(
+    websocket: WebSocket,
+    token: str
+):
+    """WebSocket endpoint for real-time voice conversation"""
+    try:
+        # Authenticate user from token
+        from utils.auth import decode_token
+        from database import get_db
+        
+        payload = decode_token(token)
+        user_id = payload.get("sub")
+        
+        db = next(get_db())
+        user = db.query(User).filter(User.id == user_id).first()
+        
+        if not user:
+            await websocket.close(code=1008, reason="Invalid token")
+            return
+        
+        # Create handler and start conversation
+        handler = VoiceStreamHandler(websocket, user, agent)
+        await handler.handle_connection()
+        
+    except Exception as e:
+        logger.error(f"WebSocket endpoint error: {str(e)}", exc_info=True)
+        try:
+            await websocket.close(code=1011, reason="Internal error")
+        except:
+            pass
+
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatMessage, user: User = Depends(get_current_user)):
     """Main chat endpoint for scheduling conversations"""

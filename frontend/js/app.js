@@ -2,7 +2,7 @@ class SmartSchedulerApp {
     constructor() {
         this.sessionId = null;
         this.isProcessing = false;
-        this.contextUpdateInterval = null;
+        this.voiceMode = 'websocket'; // 'websocket' or 'traditional'
     }
 
     async initialize() {
@@ -10,103 +10,87 @@ class SmartSchedulerApp {
         const authenticated = await authManager.initialize();
         if (!authenticated) return;
 
-        // Initialize voice
-        await voiceManager.initialize();
+        // Initialize WebSocket voice manager
+        const voiceInitialized = await wsVoiceManager.initialize();
+        if (!voiceInitialized) {
+            console.warn('Voice features unavailable');
+        }
 
         // Setup event listeners
         this.setupEventListeners();
 
-        // Load session from backend response (not localStorage)
-        // We'll get it from the first message response
-        this.sessionId = null;
-
-        // Update context once on load, then every minute
-        this.updateContext();
-        this.contextUpdateInterval = setInterval(() => this.updateContext(), 60000);
+        // Check if user prefers voice mode
+        this.setupVoiceMode();
     }
 
     setupEventListeners() {
-        // Send button
-        document.getElementById('sendBtn').addEventListener('click', () => {
-            this.sendMessage();
-        });
+        // Connect button for WebSocket voice
+        const connectBtn = document.getElementById('connectBtn');
+        if (connectBtn) {
+            connectBtn.onclick = () => {
+                if (wsVoiceManager.isConnected) {
+                    wsVoiceManager.disconnect();
+                } else {
+                    wsVoiceManager.connect();
+                }
+            };
+        }
 
-        // Enter key in input
-        document.getElementById('messageInput').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                this.sendMessage();
-            }
-        });
-
-        // Voice button (hold to record)
-        const voiceBtn = document.getElementById('voiceBtn');
+        // Optional: Text input fallback (if you want to keep it)
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
         
-        voiceBtn.addEventListener('mousedown', () => {
-            voiceManager.startRecording();
-        });
-
-        voiceBtn.addEventListener('mouseup', async () => {
-            const audioBlob = await voiceManager.stopRecording();
-            if (audioBlob) {
-                this.sendVoiceMessage(audioBlob);
-            }
-        });
-
-        // Touch events for mobile
-        voiceBtn.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            voiceManager.startRecording();
-        });
-
-        voiceBtn.addEventListener('touchend', async (e) => {
-            e.preventDefault();
-            const audioBlob = await voiceManager.stopRecording();
-            if (audioBlob) {
-                this.sendVoiceMessage(audioBlob);
-            }
-        });
-    }
-
-    async updateContext() {
-        try {
-            const response = await fetch(`${API_URL}/context`, {
-                headers: authManager.getAuthHeaders()
+        if (messageInput && sendBtn) {
+            sendBtn.addEventListener('click', () => {
+                this.sendTextMessage();
             });
 
-            if (response.ok) {
-                const context = await response.json();
-                document.getElementById('currentTime').textContent = context.time;
-                document.getElementById('currentDate').textContent = 
-                    `${context.day}, ${context.date}`;
-            }
-        } catch (error) {
-            console.error('Context update error:', error);
+            messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.sendTextMessage();
+                }
+            });
+        }
+
+        // Logout button
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+            logoutBtn.onclick = () => {
+                wsVoiceManager.disconnect();
+                authManager.logout();
+            };
         }
     }
 
-    async sendMessage() {
-        const input = document.getElementById('messageInput');
-        const message = input.value.trim();
+    setupVoiceMode() {
+        // Auto-connect to voice on load (optional)
+        const autoConnect = localStorage.getItem('autoConnectVoice');
+        if (autoConnect === 'true') {
+            setTimeout(() => {
+                wsVoiceManager.connect();
+            }, 1000);
+        }
+    }
 
+    async sendTextMessage() {
+        const input = document.getElementById('messageInput');
+        if (!input) return;
+
+        const message = input.value.trim();
         if (!message || this.isProcessing) return;
 
-        // Clear input
         input.value = '';
-
-        // Add user message to chat
         this.addMessage(message, 'user');
 
-        // Show loading
-        this.setLoading(true);
         this.isProcessing = true;
+        this.showLoading(true);
 
         try {
             const requestBody = {
                 message: message
             };
 
-            // Only include session_id if we have one
             if (this.sessionId) {
                 requestBody.session_id = this.sessionId;
             }
@@ -123,19 +107,11 @@ class SmartSchedulerApp {
 
             const data = await response.json();
 
-            // CRITICAL: Store session_id from response
             if (data.session_id) {
                 this.sessionId = data.session_id;
-                console.log('Session ID:', this.sessionId, 'Turn:', data.turn_count);
             }
 
-            // Add assistant response
             this.addMessage(data.reply, 'assistant', data.tools_used);
-
-            // Play audio if available
-            if (data.audio_url) {
-                await voiceManager.playAudio(data.audio_url);
-            }
 
         } catch (error) {
             console.error('Send message error:', error);
@@ -144,44 +120,7 @@ class SmartSchedulerApp {
                 'assistant'
             );
         } finally {
-            this.setLoading(false);
-            this.isProcessing = false;
-        }
-    }
-
-    async sendVoiceMessage(audioBlob) {
-        // Show loading
-        this.setLoading(true);
-        this.isProcessing = true;
-
-        try {
-            const result = await voiceManager.sendAudio(audioBlob, this.sessionId);
-
-            // CRITICAL: Store session_id from response
-            if (result.session_id) {
-                this.sessionId = result.session_id;
-                console.log('Session ID:', this.sessionId, 'Turn:', result.turn_count);
-            }
-
-            // Add transcribed message as user message
-            this.addMessage(result.transcript, 'user');
-
-            // Add assistant response
-            this.addMessage(result.reply, 'assistant', result.tools_used);
-
-            // Play audio response
-            if (result.audio_url) {
-                await voiceManager.playAudio(result.audio_url);
-            }
-
-        } catch (error) {
-            console.error('Voice message error:', error);
-            this.addMessage(
-                'Sorry, I couldn\'t process your voice message. Please try again.',
-                'assistant'
-            );
-        } finally {
-            this.setLoading(false);
+            this.showLoading(false);
             this.isProcessing = false;
         }
     }
@@ -233,19 +172,15 @@ class SmartSchedulerApp {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
 
-    setLoading(isLoading) {
+    showLoading(isLoading) {
         const overlay = document.getElementById('loadingOverlay');
-        const sendBtn = document.getElementById('sendBtn');
-        
-        overlay.style.display = isLoading ? 'flex' : 'none';
-        sendBtn.disabled = isLoading;
+        if (overlay) {
+            overlay.style.display = isLoading ? 'flex' : 'none';
+        }
     }
 
-    // Add cleanup method
     cleanup() {
-        if (this.contextUpdateInterval) {
-            clearInterval(this.contextUpdateInterval);
-        }
+        wsVoiceManager.disconnect();
     }
 }
 

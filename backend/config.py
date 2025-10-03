@@ -43,6 +43,7 @@ class Config:
     DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")  # For STT
     ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")  # For TTS
     VOICE_ENABLED = os.getenv("VOICE_ENABLED", "true").lower() == "true"
+    ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM") 
     
     # Timezone & Scheduling
     DEFAULT_TIMEZONE = os.getenv("DEFAULT_TIMEZONE", "Asia/Kolkata")
