@@ -185,33 +185,51 @@ class VoiceStreamHandler:
                 })
             
             async def on_final(text: str):
-                """Handle final transcripts - TRIGGER INTERRUPTION HERE"""
+                """Handle final transcripts - ONLY interrupt on meaningful speech"""
                 nonlocal accumulated_transcript
                 
                 if not text.strip():
                     return
                 
-                logger.info(f"Final transcript: {text}")
+                # Clean and validate the transcript
+                cleaned_text = text.strip()
+                word_count = len(cleaned_text.split())
+                
+                logger.info(f"Final transcript: {cleaned_text} (words: {word_count})")
                 accumulated_transcript = ""
                 self.last_activity = time.time()
                 
-                # CRITICAL: If AI is speaking and we got ACTUAL WORDS, interrupt!
-                if self.is_ai_speaking and text.strip():
-                    logger.warning(f"🛑 INTERRUPTION DETECTED: User said '{text}' while AI speaking")
-                    await self.interrupt_ai_speech()
+                # CRITICAL: Only interrupt if this is MEANINGFUL speech
+                # Filter out noise, single words, or very short utterances
+                MIN_WORDS_FOR_INTERRUPTION = 2  # At least 2 words
+                MIN_CHARS_FOR_INTERRUPTION = 6  # At least 6 characters
                 
-                # Send confirmed transcript
+                is_meaningful_speech = (
+                    word_count >= MIN_WORDS_FOR_INTERRUPTION and 
+                    len(cleaned_text) >= MIN_CHARS_FOR_INTERRUPTION
+                )
+                
+                if self.is_ai_speaking and is_meaningful_speech:
+                    logger.warning(f"🛑 INTERRUPTION DETECTED: User said '{cleaned_text}' while AI speaking")
+                    await self.interrupt_ai_speech()
+                elif self.is_ai_speaking and not is_meaningful_speech:
+                    logger.info(f"⚠️ Ignoring noise/short utterance during AI speech: '{cleaned_text}'")
+                    # Don't send transcript or process - just ignore
+                    return
+                
+                # Send confirmed transcript only if not noise
                 await self.send_message({
                     "type": "transcript",
-                    "text": text
+                    "text": cleaned_text
                 })
                 
-                # Reset user speaking flag (will be set again if more audio comes)
+                # Reset user speaking flag
                 self.is_user_speaking = False
                 
                 # Process the query
-                await self.process_query(text)
-            
+                await self.process_query(cleaned_text)
+                
+                
             # Start Deepgram transcription stream
             await streaming_voice_service.transcribe_stream(
                 audio_stream=audio_generator(),
