@@ -11,10 +11,12 @@ class WebSocketVoiceManager {
         this.lastSpeechEndTime = null;
         this.responseStartTime = null;
 
-        // Streaming audio playback
-        this.audioQueue = [];
+        // Audio buffer management - accumulate per sentence
+        this.currentSentenceBuffer = [];
+        this.sentenceQueue = [];
         this.isPlayingAudio = false;
         this.currentAudioSource = null;
+        this.audioStarted = false;
     }
 
     async initialize() {
@@ -144,7 +146,6 @@ class WebSocketVoiceManager {
             case 'transcript':
                 this.addMessage(message.text, 'user');
                 this.clearPartialTranscript();
-                // Mark when user finished speaking
                 this.lastSpeechEndTime = Date.now();
                 this.isUserSpeaking = false;
                 break;
@@ -166,13 +167,19 @@ class WebSocketVoiceManager {
                 }
                 console.log('🔊 AI starting to speak');
                 this.isAISpeaking = true;
-                
-                // Start streaming playback immediately
-                this.startStreamingAudioPlayback();
+                this.audioStarted = false;
+                this.currentSentenceBuffer = [];
+                this.sentenceQueue = [];
                 break;
 
             case 'audio_complete':
                 console.log('🔊 Audio stream complete');
+                
+                // Finalize current sentence buffer if exists
+                if (this.currentSentenceBuffer.length > 0) {
+                    await this.finalizeSentence();
+                }
+                
                 const endTime = Date.now();
                 if (this.responseStartTime) {
                     const streamDuration = endTime - this.responseStartTime;
@@ -216,11 +223,49 @@ class WebSocketVoiceManager {
     }
 
     async handleAudioChunk(audioData) {
-        // Queue audio chunks for streaming playback
-        this.audioQueue.push(audioData);
+        // Accumulate chunks for current sentence
+        this.currentSentenceBuffer.push(audioData);
+        
+        // Heuristic: If we've accumulated enough data (64KB ~= 1 sentence from ElevenLabs)
+        // OR if we haven't started playing yet and have some data, finalize this sentence
+        const bufferSize = this.currentSentenceBuffer.reduce((sum, chunk) => {
+            return sum + (chunk.byteLength || chunk.length);
+        }, 0);
+        
+        // Start playback quickly with first ~20KB, then every ~64KB after
+        const threshold = this.audioStarted ? 64000 : 20000;
+        
+        if (bufferSize >= threshold) {
+            await this.finalizeSentence();
+        }
+    }
+
+    async finalizeSentence() {
+        if (this.currentSentenceBuffer.length === 0) return;
+        
+        // Combine all chunks into one complete MP3
+        const totalLength = this.currentSentenceBuffer.reduce((sum, chunk) => {
+            const buffer = chunk instanceof ArrayBuffer ? chunk : chunk.buffer;
+            return sum + buffer.byteLength;
+        }, 0);
+        
+        const combinedBuffer = new Uint8Array(totalLength);
+        let offset = 0;
+        
+        for (const chunk of this.currentSentenceBuffer) {
+            const buffer = chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : new Uint8Array(chunk);
+            combinedBuffer.set(buffer, offset);
+            offset += buffer.byteLength;
+        }
+        
+        // Queue this complete sentence for playback
+        this.sentenceQueue.push(combinedBuffer.buffer);
+        
+        // Clear buffer for next sentence
+        this.currentSentenceBuffer = [];
         
         // Start playing if not already
-        if (!this.isPlayingAudio && this.isAISpeaking) {
+        if (!this.isPlayingAudio) {
             this.startStreamingAudioPlayback();
         }
     }
@@ -232,35 +277,41 @@ class WebSocketVoiceManager {
         console.log('🔊 Starting streaming playback');
         
         try {
-            while (this.isAISpeaking || this.audioQueue.length > 0) {
-                // Wait for chunks if queue is empty
-                if (this.audioQueue.length === 0) {
-                    await new Promise(resolve => setTimeout(resolve, 50));
+            while (this.isAISpeaking || this.sentenceQueue.length > 0) {
+                // Wait for sentences if queue is empty
+                if (this.sentenceQueue.length === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
                     continue;
                 }
                 
                 // Check if interrupted
-                if (!this.isAISpeaking && this.audioQueue.length === 0) {
+                if (!this.isAISpeaking && this.sentenceQueue.length === 0) {
                     break;
                 }
                 
-                // Get next chunk
-                const chunk = this.audioQueue.shift();
+                // Get next complete sentence audio
+                const sentenceAudio = this.sentenceQueue.shift();
                 
                 try {
-                    // Decode and play immediately
-                    const audioBuffer = await this.audioContext.decodeAudioData(chunk);
+                    // Decode complete MP3 sentence
+                    const audioBuffer = await this.audioContext.decodeAudioData(sentenceAudio);
+                    
+                    // Mark that audio has started
+                    if (!this.audioStarted) {
+                        this.audioStarted = true;
+                        console.log('🎵 First audio playing');
+                    }
                     
                     // Check again before playing
-                    if (!this.isAISpeaking && this.audioQueue.length === 0) {
+                    if (!this.isAISpeaking && this.sentenceQueue.length === 0) {
                         break;
                     }
                     
                     await this.playAudioBuffer(audioBuffer);
                     
                 } catch (err) {
-                    console.warn('Decode error (might be partial chunk):', err);
-                    // Continue - might be incomplete MP3 fragment
+                    console.error('Failed to decode sentence audio:', err);
+                    // Continue to next sentence
                 }
             }
             
@@ -304,10 +355,12 @@ class WebSocketVoiceManager {
             } catch { }
         }
         
-        // Clear audio queue
-        this.audioQueue = [];
+        // Clear all buffers
+        this.currentSentenceBuffer = [];
+        this.sentenceQueue = [];
         this.isAISpeaking = false;
         this.isPlayingAudio = false;
+        this.audioStarted = false;
     }
 
     // UI Methods
@@ -428,7 +481,6 @@ class WebSocketVoiceManager {
             statusEl.className = 'status-message';
             statusEl.style.display = 'block';
             
-            // Auto-hide after 3 seconds
             setTimeout(() => {
                 if (statusEl.textContent === message) {
                     statusEl.style.display = 'none';
