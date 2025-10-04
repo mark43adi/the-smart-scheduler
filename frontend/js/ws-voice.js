@@ -169,6 +169,14 @@ class WebSocketVoiceManager {
                 this.streamingComplete = false;
                 break;
 
+            case 'latency_metric':
+                const ttfa = message.ttfa_ms;
+                console.log(`⚡ TTFA (Time To First Audio): ${ttfa}ms`);
+                
+                // Display on UI
+                this.showLatencyMetric(ttfa);
+                break;
+
             case 'audio_complete':
                 console.log('🔊 Backend done sending audio');
                 this.streamingComplete = true;
@@ -212,6 +220,47 @@ class WebSocketVoiceManager {
             default:
                 console.debug('Message:', message);
         }
+    }
+
+    showLatencyMetric(ttfa) {
+        // Create or update latency badge
+        let badge = document.getElementById('latencyBadge');
+        if (!badge) {
+            badge = document.createElement('div');
+            badge.id = 'latencyBadge';
+            badge.style.cssText = `
+                position: fixed;
+                top: 80px;
+                right: 20px;
+                background: rgba(16, 185, 129, 0.9);
+                color: white;
+                padding: 8px 16px;
+                border-radius: 20px;
+                font-size: 14px;
+                font-weight: 600;
+                z-index: 1000;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                transition: all 0.3s ease;
+            `;
+            document.body.appendChild(badge);
+        }
+        
+        // Color based on latency (green < 1000ms, yellow < 2000ms, red >= 2000ms)
+        let color = '#10b981'; // green
+        if (ttfa >= 2000) {
+            color = '#ef4444'; // red
+        } else if (ttfa >= 1000) {
+            color = '#f59e0b'; // yellow
+        }
+        
+        badge.style.background = `rgba(${parseInt(color.slice(1,3), 16)}, ${parseInt(color.slice(3,5), 16)}, ${parseInt(color.slice(5,7), 16)}, 0.9)`;
+        badge.textContent = `⚡ ${ttfa}ms TTFA`;
+        
+        // Fade out after 3 seconds
+        setTimeout(() => {
+            badge.style.opacity = '0';
+            setTimeout(() => badge.remove(), 300);
+        }, 3000);
     }
 
     async handleAudioChunk(audioData) {

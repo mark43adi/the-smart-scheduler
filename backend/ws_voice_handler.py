@@ -236,6 +236,8 @@ class VoiceStreamHandler:
             return
         
         self.is_processing = True
+        query_start_time = time.time()
+        first_audio_sent = None
         
         try:
             await self.send_message({"type": "thinking"})
@@ -338,14 +340,33 @@ class VoiceStreamHandler:
             
             async def stream_tts_to_frontend():
                 """Stream TTS audio directly to frontend as it's generated"""
+                nonlocal first_audio_sent
                 try:
+                    audio_chunk_count = 0
+                    
                     async def on_audio_chunk(audio_bytes: bytes):
                         """Callback for each audio chunk from ElevenLabs"""
+                        nonlocal first_audio_sent, audio_chunk_count
+                        
                         if self.interrupt_flag or not self.is_connected:
                             return
                         
                         try:
+                            # Track first audio chunk latency
+                            if first_audio_sent is None:
+                                first_audio_sent = time.time()
+                                ttfa = (first_audio_sent - query_start_time) * 1000
+                                logger.info(f"⚡ TTFA (Time To First Audio): {ttfa:.0f}ms")
+                                
+                                # Send latency metric to frontend
+                                await self.send_message({
+                                    "type": "latency_metric",
+                                    "ttfa_ms": int(ttfa)
+                                })
+                            
+                            audio_chunk_count += 1
                             await self.websocket.send_bytes(audio_bytes)
+                            
                         except Exception as e:
                             logger.error(f"Send audio error: {e}")
                     
@@ -355,7 +376,7 @@ class VoiceStreamHandler:
                         on_audio_chunk=on_audio_chunk
                     )
                     
-                    logger.info("✓ TTS streaming complete")
+                    logger.info(f"✓ TTS streaming complete - sent {audio_chunk_count} audio chunks")
                     tts_complete.set()
                     
                 except Exception as e:
@@ -372,6 +393,10 @@ class VoiceStreamHandler:
             
             # Wait for TTS to complete
             await tts_complete.wait()
+            
+            # Calculate total processing time
+            total_time = (time.time() - query_start_time) * 1000
+            logger.info(f"✓ Total query processing time: {total_time:.0f}ms")
             
             # Signal completion
             if not self.interrupt_flag:
