@@ -4,17 +4,17 @@ class WebSocketVoiceManager {
         this.mediaRecorder = null;
         this.audioContext = null;
         this.isConnected = false;
-        this.isAISpeaking = false;
         this.isUserSpeaking = false;
 
         // Latency tracking
         this.lastSpeechEndTime = null;
         this.responseStartTime = null;
 
-        // Streaming audio - play chunks immediately as they arrive
+        // Audio playback - SIMPLE queue-based approach
         this.audioQueue = [];
         this.isPlayingAudio = false;
         this.currentAudioSource = null;
+        this.streamingComplete = false; // Backend done sending
     }
 
     async initialize() {
@@ -84,7 +84,7 @@ class WebSocketVoiceManager {
                 if (typeof event.data === 'string') {
                     await this.handleMessage(JSON.parse(event.data));
                 } else {
-                    // Binary audio chunk - play immediately
+                    // Binary audio chunk
                     await this.handleAudioChunk(event.data);
                 }
             };
@@ -162,27 +162,26 @@ class WebSocketVoiceManager {
                 this.responseStartTime = Date.now();
                 if (this.lastSpeechEndTime) {
                     const latency = this.responseStartTime - this.lastSpeechEndTime;
-                    console.log(`⏱️ Latency (speech_end → audio_start): ${latency} ms`);
+                    console.log(`⏱️ Latency: ${latency} ms`);
                 }
-                console.log('🔊 AI starting to speak - streaming mode');
-                this.isAISpeaking = true;
+                console.log('🔊 AI starting to speak');
                 this.audioQueue = [];
+                this.streamingComplete = false;
                 break;
 
             case 'audio_complete':
-                console.log('🔊 Audio stream complete - will finish playing queued chunks');
-                // DON'T set isAISpeaking = false yet!
-                // Let the playback loop finish naturally
+                console.log('🔊 Backend done sending audio');
+                this.streamingComplete = true;
                 
                 const endTime = Date.now();
                 if (this.responseStartTime) {
                     const streamDuration = endTime - this.responseStartTime;
-                    console.log(`⏱️ Total streaming duration: ${streamDuration} ms`);
+                    console.log(`⏱️ Streaming duration: ${streamDuration} ms`);
                 }
                 break;
 
             case 'interrupted':
-                console.log('🛑 AI speech interrupted by user');
+                console.log('🛑 Interrupted');
                 this.stopAudioPlayback();
                 this.hideThinking();
                 this.showStatus('Interrupted - listening...');
@@ -190,17 +189,15 @@ class WebSocketVoiceManager {
 
             case 'ready':
                 this.showStatus('Ready');
-                // NOW it's safe to mark as done
-                this.isAISpeaking = false;
                 if (this.lastSpeechEndTime) {
                     const totalLatency = Date.now() - this.lastSpeechEndTime;
-                    console.log(`✅ End-to-End Latency: ${totalLatency} ms`);
+                    console.log(`✅ Total latency: ${totalLatency} ms`);
                 }
                 break;
 
             case 'error':
                 this.showError(message.message);
-                this.isAISpeaking = false;
+                this.stopAudioPlayback();
                 break;
 
             case 'silence_warning':
@@ -218,112 +215,101 @@ class WebSocketVoiceManager {
     }
 
     async handleAudioChunk(audioData) {
-        // Queue audio chunk for sequential playback
         this.audioQueue.push(audioData);
+        console.log(`📦 Queued chunk, total: ${this.audioQueue.length}`);
         
-        // Start playback if not already playing
+        // Start playback if not already running
         if (!this.isPlayingAudio) {
-            this.startStreamingPlayback();
+            this.playAudioQueue();
         }
     }
 
-    async startStreamingPlayback() {
-        if (this.isPlayingAudio) return;
-        this.isPlayingAudio = true;
+    async playAudioQueue() {
+        if (this.isPlayingAudio) {
+            console.warn('⚠️ Playback already running');
+            return;
+        }
         
-        console.log('🔊 Starting streaming playback');
+        this.isPlayingAudio = true;
+        console.log('🔊 Starting playback loop');
+        
+        let chunkCount = 0;
         
         try {
-            let chunkCount = 0;
-            
-            // Keep playing while we have queued audio
-            // Don't check isAISpeaking here - let queue drain completely
             while (true) {
-                // Exit only when queue is truly empty
-                if (this.audioQueue.length === 0) {
-                    // Wait a bit for more chunks if AI is still speaking
-                    if (this.isAISpeaking) {
-                        await new Promise(resolve => setTimeout(resolve, 50));
-                        // Check again after waiting
-                        if (this.audioQueue.length === 0 && !this.isAISpeaking) {
-                            break; // AI done and no more audio
-                        }
-                        continue;
-                    } else {
-                        break; // AI done and queue empty
+                // Check if we have chunks to play
+                if (this.audioQueue.length > 0) {
+                    const audioData = this.audioQueue.shift();
+                    
+                    try {
+                        const audioBuffer = await this.audioContext.decodeAudioData(audioData);
+                        chunkCount++;
+                        console.log(`🎵 Playing chunk ${chunkCount}, remaining: ${this.audioQueue.length}`);
+                        
+                        // Play and WAIT for completion
+                        await this.playAudioBuffer(audioBuffer);
+                        
+                    } catch (err) {
+                        console.error('⚠️ Decode error:', err);
                     }
                 }
-                
-                // Get next audio chunk
-                const audioData = this.audioQueue.shift();
-                
-                try {
-                    // Decode MP3 chunk
-                    const audioBuffer = await this.audioContext.decodeAudioData(audioData);
-                    
-                    chunkCount++;
-                    if (chunkCount === 1) {
-                        console.log('🎵 First audio chunk playing');
+                // No chunks in queue
+                else {
+                    // If backend is done AND queue is empty, we're finished
+                    if (this.streamingComplete) {
+                        console.log(`✓ Playback complete - played ${chunkCount} chunks`);
+                        break;
                     }
-                    if (chunkCount % 5 === 0) {
-                        console.log(`🎵 Playing chunk ${chunkCount}, queue: ${this.audioQueue.length}`);
+                    // Otherwise wait for more chunks
+                    else {
+                        await new Promise(resolve => setTimeout(resolve, 50));
                     }
-                    
-                    // Play sequentially - WAIT for each chunk to finish
-                    await this.playAudioBuffer(audioBuffer);
-                    
-                } catch (err) {
-                    console.error('⚠️ Failed to decode audio chunk:', err);
-                    continue; // Skip bad chunk
                 }
             }
-            
-            console.log(`✓ Streaming playback complete - played ${chunkCount} chunks`);
-            
         } catch (err) {
-            console.error('Playback error:', err);
+            console.error('❌ Playback error:', err);
         } finally {
             this.isPlayingAudio = false;
-            this.isAISpeaking = false; // Now mark as fully done
+            console.log('🔊 Playback loop ended');
         }
     }
 
     playAudioBuffer(audioBuffer) {
-        return new Promise((resolve) => {
-            // Check if interrupted before playing
-            if (!this.isAISpeaking) {
-                resolve();
-                return;
+        return new Promise((resolve, reject) => {
+            try {
+                const source = this.audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(this.audioContext.destination);
+                
+                source.onended = () => {
+                    this.currentAudioSource = null;
+                    resolve();
+                };
+                
+                this.currentAudioSource = source;
+                source.start(0);
+            } catch (err) {
+                reject(err);
             }
-            
-            const source = this.audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(this.audioContext.destination);
-            
-            source.onended = () => {
-                this.currentAudioSource = null;
-                resolve(); // Continue to next chunk
-            };
-            
-            this.currentAudioSource = source;
-            source.start();
         });
     }
 
     stopAudioPlayback() {
-        console.log('🛑 Stopping audio playback');
+        console.log('🛑 Stopping playback');
         
-        // Stop current audio source
+        // Stop current audio
         if (this.currentAudioSource) {
             try {
                 this.currentAudioSource.stop();
                 this.currentAudioSource = null;
-            } catch { }
+            } catch (e) {
+                console.warn('Stop error:', e);
+            }
         }
         
         // Clear queue
         this.audioQueue = [];
-        this.isAISpeaking = false;
+        this.streamingComplete = true; // Force loop to exit
         this.isPlayingAudio = false;
     }
 
