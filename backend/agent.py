@@ -71,25 +71,27 @@ class SmartSchedulerAgent:
         """Initialize the agent with tools and configuration"""
         self.sessions: Dict[str, ConversationState] = {}
         self.time_parser = TimeParser()
-        self.audio_cache: Dict[str, bytes] = {}  # Store audio temporarily
+        self.audio_cache: Dict[str, bytes] = {}
         
-        # All available tools
+        # Initialize LLM ONCE (not per request)
+        self.llm = get_llm()
+        logger.info("LLM initialized and cached")
+        
         self.tools = [
             calendar_list_upcoming,
             calendar_find_event_by_title,
             calendar_today_summary,
-            calendar_list_events_by_date,        # NEW: View any day's schedule
+            calendar_list_events_by_date,
             calendar_freebusy,
             calendar_create_event,
-            calendar_update_event_attendees,      # NEW: Update existing events
+            calendar_update_event_attendees,
         ]
         
-        # Map for tool execution
         self.tool_map = {tool.name: tool for tool in self.tools}
         
         logger.info(f"SmartSchedulerAgent initialized with {len(self.tools)} tools")
-        logger.info(f"Available tools: {[t.name for t in self.tools]}")
-
+        
+        
     def get_or_create_session(self, session_id: str) -> ConversationState:
         """Get existing session or create new one"""
         if session_id not in self.sessions:
@@ -157,272 +159,176 @@ class SmartSchedulerAgent:
         
         return user_message
 
-    # async def process_message(self, session_id: str, user_message: str, user: User) -> Dict[str, Any]:
-    #     """
-    #     Main conversation flow with context awareness
+    
+    async def process_message_streaming(
+        self, 
+        session_id: str, 
+        user_message: str, 
+        user: User
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Stream LLM responses token by token for immediate TTS
         
-    #     Args:
-    #         session_id: Unique session identifier
-    #         user_message: User's message text
-    #         user: User object from database
-        
-    #     Returns:
-    #         Dictionary with reply, tools_used, and metadata
-    #     """
-    #     logger.info(f"[Session: {session_id}] [User: {user.email}] Processing message: '{user_message[:100]}...'")
-        
-    #     # CRITICAL: Set user context for tools BEFORE any tool execution
-    #     set_user_context(user)
-        
-    #     state = self.get_or_create_session(session_id)
-        
-    #     # Add user info to metadata
-    #     state.metadata['user_email'] = user.email
-    #     state.metadata['user_name'] = user.name
-    #     state.metadata['is_main_account'] = user.is_main_account
-
-    #     # Enrich message with extracted information
-    #     enriched_message = self._enrich_user_message(user_message, state)
-        
-    #     # Add user message to conversation history
-    #     state.add_message(HumanMessage(content=enriched_message))
-        
-    #     # Prepare LLM with tools
-    #     llm = get_llm().bind_tools(self.tools)
-        
-    #     try:
-    #         # Step 1: LLM processes message and decides action
-    #         logger.info(f"[Session: {session_id}] Invoking LLM with {len(state.messages)} messages in history")
-            
-    #         # Use recent messages to stay within context limits
-    #         recent_messages = state.get_recent_messages()
-    #         response = await llm.ainvoke(recent_messages)
-            
-    #         logger.info(f"[Session: {session_id}] LLM response received")
-    #         logger.debug(f"[Session: {session_id}] Response content length: {len(response.content) if response.content else 0}")
-            
-    #         # Check if LLM wants to call tools
-    #         tool_calls = getattr(response, "tool_calls", None) or []
-            
-    #         if tool_calls:
-    #             logger.info(f"[Session: {session_id}] LLM requested {len(tool_calls)} tool call(s)")
-                
-    #             # Add AI message with tool calls to history
-    #             state.add_message(response)
-                
-    #             # Step 2: Execute all requested tools
-    #             tool_results = []
-    #             for idx, tool_call in enumerate(tool_calls):
-    #                 tool_name = tool_call.get("name")
-    #                 tool_args = tool_call.get("args", {})
-    #                 tool_id = tool_call.get("id")
-                    
-    #                 logger.info(f"[Session: {session_id}] Executing tool {idx+1}/{len(tool_calls)}: {tool_name}")
-    #                 logger.debug(f"[Session: {session_id}] Tool arguments: {json.dumps(tool_args, indent=2)}")
-                    
-    #                 try:
-    #                     # Execute the tool (user context already set)
-    #                     result = await self._execute_tool(tool_name, tool_args)
-                        
-    #                     logger.info(f"[Session: {session_id}] Tool {tool_name} executed successfully")
-    #                     logger.debug(f"[Session: {session_id}] Tool result preview: {str(result)[:300]}...")
-                        
-    #                     tool_results.append({
-    #                         "tool": tool_name,
-    #                         "args": tool_args,
-    #                         "result": result,
-    #                         "success": True
-    #                     })
-                        
-    #                     # Add tool result to conversation history
-    #                     tool_message = ToolMessage(
-    #                         content=json.dumps(result, default=str),
-    #                         tool_call_id=tool_id
-    #                     )
-    #                     state.add_message(tool_message)
-                        
-    #                 except Exception as e:
-    #                     logger.error(f"[Session: {session_id}] Tool {tool_name} failed: {str(e)}", exc_info=True)
-                        
-    #                     error_result = {
-    #                         "error": str(e),
-    #                         "tool": tool_name,
-    #                         "args": tool_args
-    #                     }
-    #                     tool_results.append({
-    #                         "tool": tool_name,
-    #                         "args": tool_args,
-    #                         "result": error_result,
-    #                         "success": False
-    #                     })
-                        
-    #                     # Add error message to history
-    #                     tool_message = ToolMessage(
-    #                         content=json.dumps(error_result),
-    #                         tool_call_id=tool_id
-    #                     )
-    #                     state.add_message(tool_message)
-                
-    #             # Step 3: Feed tool results back to LLM for final response
-    #             logger.info(f"[Session: {session_id}] Feeding {len(tool_results)} tool results back to LLM")
-                
-    #             recent_messages = state.get_recent_messages()
-    #             final_response = await llm.ainvoke(recent_messages)
-                
-    #             # Add final response to history
-    #             state.add_message(final_response)
-                
-    #             logger.info(f"[Session: {session_id}] Final response generated after tool execution")
-                
-    #             return {
-    #                 "session_id": session_id,
-    #                 "reply": final_response.content,
-    #                 "tools_used": tool_results,
-    #                 "metadata": state.metadata,
-    #                 "turn_count": state.turn_count,
-    #                 "timestamp": datetime.now().isoformat()
-    #             }
-            
-    #         else:
-    #             # No tools called, direct response
-    #             logger.info(f"[Session: {session_id}] Direct response (no tools called)")
-                
-    #             # Add AI response to history
-    #             state.add_message(response)
-                
-    #             return {
-    #                 "session_id": session_id,
-    #                 "reply": response.content,
-    #                 "tools_used": [],
-    #                 "metadata": state.metadata,
-    #                 "turn_count": state.turn_count,
-    #                 "timestamp": datetime.now().isoformat()
-    #             }
-        
-    #     except Exception as e:
-    #         logger.error(f"[Session: {session_id}] Error in process_message: {str(e)}", exc_info=True)
-            
-    #         error_response = (
-    #             "I apologize, but I encountered an error processing your request. "
-    #             "Could you please try again or rephrase your question?"
-    #         )
-            
-    #         return {
-    #             "session_id": session_id,
-    #             "reply": error_response,
-    #             "tools_used": [],
-    #             "error": str(e),
-    #             "metadata": state.metadata,
-    #             "turn_count": state.turn_count,
-    #             "timestamp": datetime.now().isoformat()
-    #         }
-
-
-    async def process_message(self, session_id: str, user_message: str, user: User) -> AsyncGenerator[str, None]:
-        """Stream LLM responses token by token"""
-        logger.info(f"[Session: {session_id}] Processing message")
+        Yields:
+            Dict with 'type' and content:
+            - {'type': 'content_chunk', 'content': str}
+            - {'type': 'complete', 'session_id': str, 'turn_count': int}
+            - {'type': 'error', 'error': str}
+        """
+        logger.info(f"[Session: {session_id}] Processing message (STREAMING MODE)")
         
         set_user_context(user)
         state = self.get_or_create_session(session_id)
         
+        state.metadata['user_email'] = user.email
+        state.metadata['user_name'] = user.name
+        state.metadata['is_main_account'] = user.is_main_account
+        
         enriched_message = self._enrich_user_message(user_message, state)
         state.add_message(HumanMessage(content=enriched_message))
         
-        llm = get_llm().bind_tools(self.tools)
+        # Use cached LLM with tools
+        llm_with_tools = self.llm.bind_tools(self.tools)
         
         try:
             recent_messages = state.get_recent_messages()
             
-            # STREAM the initial response
-            response_content = ""
-            tool_calls = []
+            # Phase 1: Stream initial LLM response
+            full_content = ""
+            tool_calls_accumulated = []
             
-            async for chunk in llm.astream(recent_messages):
-                # Accumulate for tool detection
+            logger.info(f"[Session: {session_id}] Starting LLM streaming...")
+            
+            async for chunk in llm_with_tools.astream(recent_messages):
+                # Stream content tokens immediately
                 if hasattr(chunk, 'content') and chunk.content:
-                    response_content += chunk.content
-                    # Yield immediately for TTS
-                    yield chunk.content
+                    full_content += chunk.content
+                    yield {
+                        'type': 'content_chunk',
+                        'content': chunk.content
+                    }
                 
-                # Collect tool calls
+                # Accumulate tool calls
                 if hasattr(chunk, 'tool_calls') and chunk.tool_calls:
-                    tool_calls.extend(chunk.tool_calls)
+                    tool_calls_accumulated.extend(chunk.tool_calls)
             
-            # Handle tool calls if any
-            if tool_calls:
-                # Execute tools
-                tool_results = []
-                for tool_call in tool_calls:
-                    result = await self._execute_tool(
-                        tool_call.get("name"), 
-                        tool_call.get("args", {})
-                    )
-                    tool_results.append(result)
+            logger.info(f"[Session: {session_id}] LLM streaming complete. Tools: {len(tool_calls_accumulated)}")
+            
+            # Phase 2: If tools were called, execute and stream final response
+            if tool_calls_accumulated:
+                logger.info(f"[Session: {session_id}] Executing {len(tool_calls_accumulated)} tools")
+                
+                # Add AI message with tool calls to history
+                state.add_message(AIMessage(
+                    content=full_content,
+                    tool_calls=tool_calls_accumulated
+                ))
+                
+                # Execute all tools
+                for tool_call in tool_calls_accumulated:
+                    tool_name = tool_call.get("name")
+                    tool_args = tool_call.get("args", {})
+                    tool_id = tool_call.get("id")
                     
-                    # Add tool message
-                    state.add_message(ToolMessage(
-                        content=json.dumps(result, default=str),
-                        tool_call_id=tool_call.get("id")
-                    ))
+                    try:
+                        logger.info(f"[Session: {session_id}] Executing: {tool_name}")
+                        result = await self._execute_tool(tool_name, tool_args)
+                        
+                        tool_message = ToolMessage(
+                            content=json.dumps(result, default=str),
+                            tool_call_id=tool_id
+                        )
+                        state.add_message(tool_message)
+                        
+                    except Exception as e:
+                        logger.error(f"[Session: {session_id}] Tool {tool_name} failed: {e}")
+                        error_message = ToolMessage(
+                            content=json.dumps({"error": str(e)}),
+                            tool_call_id=tool_id
+                        )
+                        state.add_message(error_message)
                 
                 # Stream final response with tool context
-                async for chunk in llm.astream(state.get_recent_messages()):
+                logger.info(f"[Session: {session_id}] Streaming final response after tools...")
+                recent_messages = state.get_recent_messages()
+                
+                async for chunk in llm_with_tools.astream(recent_messages):
                     if hasattr(chunk, 'content') and chunk.content:
-                        yield chunk.content
+                        yield {
+                            'type': 'content_chunk',
+                            'content': chunk.content
+                        }
             
+            # Signal completion
+            yield {
+                'type': 'complete',
+                'session_id': session_id,
+                'turn_count': state.turn_count
+            }
+            
+            logger.info(f"[Session: {session_id}] Streaming complete")
+        
         except Exception as e:
-            logger.error(f"Error: {e}", exc_info=True)
-            yield "I apologize, but I encountered an error."
-    
+            logger.error(f"[Session: {session_id}] Error in streaming: {e}", exc_info=True)
+            yield {
+                'type': 'error',
+                'error': str(e)
+            }
 
     async def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
-        """
-        Execute a tool and return its result
-        
-        Args:
-            tool_name: Name of the tool to execute
-            args: Tool arguments
-        
-        Returns:
-            Tool execution result
-        """
+        """Execute a tool and return its result"""
         tool = self.tool_map.get(tool_name)
         if not tool:
             logger.error(f"Tool not found: {tool_name}")
             raise ValueError(f"Unknown tool: {tool_name}")
         
         try:
-            # Tools are synchronous, so we call invoke directly
-            logger.debug(f"Invoking tool {tool_name} with args: {args}")
             result = tool.invoke(args)
             return result
         except Exception as e:
-            logger.error(f"Tool execution failed for {tool_name}: {str(e)}", exc_info=True)
+            logger.error(f"Tool execution failed for {tool_name}: {e}", exc_info=True)
             raise
+
+    # Keep legacy method for non-streaming endpoints
+    async def process_message(self, session_id: str, user_message: str, user: User) -> Dict[str, Any]:
+        """Legacy method - collects streaming response into single dict"""
+        full_reply = ""
+        
+        async for chunk_data in self.process_message_streaming(session_id, user_message, user):
+            if chunk_data['type'] == 'content_chunk':
+                full_reply += chunk_data['content']
+            elif chunk_data['type'] == 'complete':
+                return {
+                    "session_id": chunk_data['session_id'],
+                    "reply": full_reply,
+                    "tools_used": [],
+                    "metadata": self.sessions[session_id].metadata,
+                    "turn_count": chunk_data['turn_count'],
+                    "timestamp": datetime.now().isoformat()
+                }
+            elif chunk_data['type'] == 'error':
+                return {
+                    "session_id": session_id,
+                    "reply": "I apologize, but I encountered an error.",
+                    "tools_used": [],
+                    "error": chunk_data['error'],
+                    "metadata": {},
+                    "turn_count": 0,
+                    "timestamp": datetime.now().isoformat()
+                }
 
     def store_audio(self, audio_id: str, audio_data: bytes):
         """Store audio temporarily"""
         self.audio_cache[audio_id] = audio_data
-        logger.debug(f"Stored audio: {audio_id} ({len(audio_data)} bytes)")
 
     def get_audio(self, audio_id: str) -> Optional[bytes]:
         """Retrieve stored audio"""
-        audio = self.audio_cache.get(audio_id)
-        if audio:
-            logger.debug(f"Retrieved audio: {audio_id}")
-        else:
-            logger.warning(f"Audio not found: {audio_id}")
-        return audio
+        return self.audio_cache.get(audio_id)
 
     def get_session_info(self, session_id: str) -> Optional[Dict]:
         """Get session information"""
         state = self.sessions.get(session_id)
-        if state:
-            info = state.to_dict()
-            logger.info(f"Retrieved session info for {session_id}: {info}")
-            return info
-        logger.warning(f"Session not found: {session_id}")
-        return None
+        return state.to_dict() if state else None
 
     def list_sessions(self) -> List[Dict]:
         """List all active sessions"""
@@ -434,7 +340,6 @@ class SmartSchedulerAgent:
             logger.info(f"Clearing session: {session_id}")
             del self.sessions[session_id]
             return True
-        logger.warning(f"Cannot clear session (not found): {session_id}")
         return False
 
     def clear_all_sessions(self):
@@ -443,3 +348,6 @@ class SmartSchedulerAgent:
         self.sessions.clear()
         self.audio_cache.clear()
         logger.info(f"Cleared {count} sessions and audio cache")
+
+    
+    

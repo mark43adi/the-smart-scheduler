@@ -3,19 +3,18 @@ class WebSocketVoiceManager {
         this.ws = null;
         this.mediaRecorder = null;
         this.audioContext = null;
-        this.sourceNode = null;
         this.isConnected = false;
-        this.isSpeaking = false;
+        this.isAISpeaking = false;
+        this.isUserSpeaking = false;
+
+        // Latency tracking
         this.lastSpeechEndTime = null;
         this.responseStartTime = null;
 
-        // Audio accumulation for complete playback
-        this.audioChunks = [];
-        this.currentAudioSource = null;
-
+        // Streaming audio playback
         this.audioQueue = [];
-        this.isPlaying = false;
-        this.playbackStartTime = null;
+        this.isPlayingAudio = false;
+        this.currentAudioSource = null;
     }
 
     async initialize() {
@@ -48,12 +47,8 @@ class WebSocketVoiceManager {
             });
 
             this.mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0 && this.isConnected && !this.isSpeaking) {
+                if (event.data.size > 0 && this.isConnected) {
                     this.ws.send(event.data);
-                    this.chunkCount = (this.chunkCount || 0) + 1;
-                    if (this.chunkCount % 20 === 0) {
-                        console.log(`📤 Sent ${this.chunkCount} chunks so far...`);
-                    }
                 }
             };
 
@@ -74,7 +69,7 @@ class WebSocketVoiceManager {
             const token = authManager.token;
             if (!token) throw new Error('Not authenticated');
 
-            const wsUrl = `${API_URL.replace('http', 'ws')}/ws/voice?token=${token}`;
+            const wsUrl = `${window.CONFIG.WS_URL}?token=${authManager.token}`;
             this.ws = new WebSocket(wsUrl);
             this.ws.binaryType = 'arraybuffer';
 
@@ -136,49 +131,6 @@ class WebSocketVoiceManager {
         this.updateRecordingUI(false);
     }
 
-    // async handleMessage(message) {
-    //     switch (message.type) {
-    //         case 'connected':
-    //             this.showStatus('Connected! Start speaking...');
-    //             break;
-
-    //         case 'partial_transcript':
-    //             this.showPartialTranscript(message.text);
-    //             break;
-
-    //         case 'transcript':
-    //             this.addMessage(message.text, 'user');
-    //             this.clearPartialTranscript();
-    //             break;
-
-    //         case 'thinking':
-    //             this.showThinking();
-    //             break;
-
-    //         case 'response_text':
-    //             this.addMessage(message.text, 'assistant', message.tools_used);
-    //             this.hideThinking();
-    //             break;
-
-    //         case 'audio_complete':
-    //             console.log('🔊 Audio streaming complete, playing accumulated audio');
-    //             await this.playAccumulatedAudio();
-    //             break;
-
-    //         case 'ready':
-    //             this.showStatus('Ready');
-    //             this.isSpeaking = false;
-    //             break;
-
-    //         case 'error':
-    //             this.showError(message.message);
-    //             break;
-
-    //         default:
-    //             console.debug('Message:', message);
-    //     }
-    // }
-
     async handleMessage(message) {
         switch (message.type) {
             case 'connected':
@@ -192,8 +144,9 @@ class WebSocketVoiceManager {
             case 'transcript':
                 this.addMessage(message.text, 'user');
                 this.clearPartialTranscript();
-                // mark when user finished speaking (approx)
+                // Mark when user finished speaking
                 this.lastSpeechEndTime = Date.now();
+                this.isUserSpeaking = false;
                 break;
 
             case 'thinking':
@@ -205,49 +158,56 @@ class WebSocketVoiceManager {
                 this.hideThinking();
                 break;
 
-            // case 'audio_start':
-            //     this.responseStartTime = Date.now();
-            //     if (this.lastSpeechEndTime) {
-            //         const latency = this.responseStartTime - this.lastSpeechEndTime;
-            //         console.log(`⏱️ Latency (speech_end → audio_start): ${latency} ms`);
-            //     }
-            //     console.log('🔊 AI starting to speak');
-            //     this.isSpeaking = true;
-            //     break;
-
-            // case 'audio_complete':
-            //     console.log('🔊 Audio streaming complete, playing accumulated audio');
-            //     const endTime = Date.now();
-            //     if (this.responseStartTime) {
-            //         const playbackLatency = endTime - this.responseStartTime;
-            //         console.log(`⏱️ AI streaming duration: ${playbackLatency} ms`);
-            //     }
-            //     await this.playAccumulatedAudio();
-            //     break;
-
             case 'audio_start':
-                this.playbackStartTime = Date.now();
-                console.log('🔊 Audio stream starting');
-                this.isSpeaking = true;
-                // Start playback immediately
-                this.startStreamingPlayback();
-                break;
+                this.responseStartTime = Date.now();
+                if (this.lastSpeechEndTime) {
+                    const latency = this.responseStartTime - this.lastSpeechEndTime;
+                    console.log(`⏱️ Latency (speech_end → audio_start): ${latency} ms`);
+                }
+                console.log('🔊 AI starting to speak');
+                this.isAISpeaking = true;
                 
+                // Start streaming playback immediately
+                this.startStreamingAudioPlayback();
+                break;
+
             case 'audio_complete':
                 console.log('🔊 Audio stream complete');
+                const endTime = Date.now();
+                if (this.responseStartTime) {
+                    const streamDuration = endTime - this.responseStartTime;
+                    console.log(`⏱️ AI streaming duration: ${streamDuration} ms`);
+                }
+                break;
+
+            case 'interrupted':
+                console.log('🛑 AI speech interrupted by user');
+                this.stopAudioPlayback();
+                this.hideThinking();
+                this.showStatus('Interrupted - listening...');
                 break;
 
             case 'ready':
                 this.showStatus('Ready');
-                this.isSpeaking = false;
+                this.isAISpeaking = false;
                 if (this.lastSpeechEndTime) {
                     const totalLatency = Date.now() - this.lastSpeechEndTime;
-                    console.log(`✅ End-to-End Latency (speech_end → ready): ${totalLatency} ms`);
+                    console.log(`✅ End-to-End Latency: ${totalLatency} ms`);
                 }
                 break;
 
             case 'error':
                 this.showError(message.message);
+                this.isAISpeaking = false;
+                break;
+
+            case 'silence_warning':
+                this.showWarning(message.message);
+                break;
+
+            case 'timeout':
+                this.showError(message.message);
+                this.disconnect();
                 break;
 
             default:
@@ -255,38 +215,33 @@ class WebSocketVoiceManager {
         }
     }
 
-
-    // 🔊 Handle MP3 audio from ElevenLabs
-    // async handleAudioChunk(audioData) {
-    //     // Don't queue individual chunks - they're incomplete MP3 fragments
-    //     // Instead, accumulate them
-    //     if (!this.audioChunks) {
-    //         this.audioChunks = [];
-    //     }
-    //     this.audioChunks.push(audioData);
-    //     this.isSpeaking = true;
-    // }
-
     async handleAudioChunk(audioData) {
         // Queue audio chunks for streaming playback
         this.audioQueue.push(audioData);
         
         // Start playing if not already
-        if (!this.isPlaying && this.isSpeaking) {
-            this.startStreamingPlayback();
+        if (!this.isPlayingAudio && this.isAISpeaking) {
+            this.startStreamingAudioPlayback();
         }
     }
 
-
-    async startStreamingPlayback() {
-        if (this.isPlaying) return;
-        this.isPlaying = true;
+    async startStreamingAudioPlayback() {
+        if (this.isPlayingAudio) return;
+        this.isPlayingAudio = true;
+        
+        console.log('🔊 Starting streaming playback');
         
         try {
-            while (this.isSpeaking || this.audioQueue.length > 0) {
+            while (this.isAISpeaking || this.audioQueue.length > 0) {
+                // Wait for chunks if queue is empty
                 if (this.audioQueue.length === 0) {
                     await new Promise(resolve => setTimeout(resolve, 50));
                     continue;
+                }
+                
+                // Check if interrupted
+                if (!this.isAISpeaking && this.audioQueue.length === 0) {
+                    break;
                 }
                 
                 // Get next chunk
@@ -295,9 +250,16 @@ class WebSocketVoiceManager {
                 try {
                     // Decode and play immediately
                     const audioBuffer = await this.audioContext.decodeAudioData(chunk);
+                    
+                    // Check again before playing
+                    if (!this.isAISpeaking && this.audioQueue.length === 0) {
+                        break;
+                    }
+                    
                     await this.playAudioBuffer(audioBuffer);
+                    
                 } catch (err) {
-                    console.warn('Decode error (partial chunk):', err);
+                    console.warn('Decode error (might be partial chunk):', err);
                     // Continue - might be incomplete MP3 fragment
                 }
             }
@@ -307,67 +269,45 @@ class WebSocketVoiceManager {
         } catch (err) {
             console.error('Playback error:', err);
         } finally {
-            this.isPlaying = false;
-        }
-    }
-
-    async playAccumulatedAudio() {
-        if (!this.audioChunks || this.audioChunks.length === 0) {
-            console.log('No audio chunks to play');
-            return;
-        }
-
-        try {
-            console.log(`🔊 Playing accumulated audio (${this.audioChunks.length} chunks)`);
-
-            // Combine all chunks into one complete MP3
-            const totalLength = this.audioChunks.reduce((sum, chunk) => {
-                const buffer = chunk instanceof ArrayBuffer ? chunk : chunk.buffer;
-                return sum + buffer.byteLength;
-            }, 0);
-
-            const combinedBuffer = new Uint8Array(totalLength);
-            let offset = 0;
-
-            for (const chunk of this.audioChunks) {
-                const buffer = chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : new Uint8Array(chunk);
-                combinedBuffer.set(buffer, offset);
-                offset += buffer.byteLength;
-            }
-
-            // Now decode the complete MP3
-            const audioBuffer = await this.audioContext.decodeAudioData(combinedBuffer.buffer);
-            await this.playAudioBuffer(audioBuffer);
-
-            console.log('✓ Audio playback complete');
-
-        } catch (err) {
-            console.error('Audio playback error:', err);
-        } finally {
-            this.audioChunks = [];
-            this.isSpeaking = false;
+            this.isPlayingAudio = false;
         }
     }
 
     playAudioBuffer(audioBuffer) {
         return new Promise((resolve) => {
+            // Don't play if interrupted
+            if (!this.isAISpeaking) {
+                resolve();
+                return;
+            }
+            
             const source = this.audioContext.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(this.audioContext.destination);
-            source.onended = resolve;
+            source.onended = () => {
+                this.currentAudioSource = null;
+                resolve();
+            };
+            this.currentAudioSource = source;
             source.start();
         });
     }
 
     stopAudioPlayback() {
+        console.log('🛑 Stopping audio playback');
+        
+        // Stop current audio source
         if (this.currentAudioSource) {
             try {
                 this.currentAudioSource.stop();
                 this.currentAudioSource = null;
             } catch { }
         }
-        this.audioChunks = [];
-        this.isSpeaking = false;
+        
+        // Clear audio queue
+        this.audioQueue = [];
+        this.isAISpeaking = false;
+        this.isPlayingAudio = false;
     }
 
     // UI Methods
@@ -487,6 +427,13 @@ class WebSocketVoiceManager {
             statusEl.textContent = message;
             statusEl.className = 'status-message';
             statusEl.style.display = 'block';
+            
+            // Auto-hide after 3 seconds
+            setTimeout(() => {
+                if (statusEl.textContent === message) {
+                    statusEl.style.display = 'none';
+                }
+            }, 3000);
         }
     }
 

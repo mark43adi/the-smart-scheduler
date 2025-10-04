@@ -10,7 +10,7 @@ import json
 logger = setup_logger("streaming_voice")
 
 class StreamingVoiceService:
-    """Real-time streaming voice service with transcription and TTS"""
+    """Real-time streaming voice service optimized for minimum latency"""
     
     def __init__(self):
         self.deepgram_api_key = config.DEEPGRAM_API_KEY
@@ -22,9 +22,7 @@ class StreamingVoiceService:
         on_transcript: Callable,
         on_final: Callable
     ):
-        """Stream audio to Deepgram for real-time transcription"""
-        # Deepgram supports opus codec directly without specifying encoding
-        # Just specify the container format
+        """Stream audio to Deepgram for real-time transcription with VAD"""
         url = (
             f"{self.deepgram_ws_url}"
             f"?model=nova-2"
@@ -32,11 +30,12 @@ class StreamingVoiceService:
             f"&smart_format=true"
             f"&endpointing=300"
             f"&vad_events=true"
+            f"&punctuate=true"
         )
         
         headers = {
             "Authorization": f"Token {self.deepgram_api_key}",
-            "Content-Type": "audio/webm"  # Specify content type instead
+            "Content-Type": "audio/webm"
         }
         
         try:
@@ -136,7 +135,10 @@ class StreamingVoiceService:
         self, 
         text_stream: AsyncGenerator[str, None]
     ) -> AsyncGenerator[bytes, None]:
-        """Stream text to ElevenLabs for real-time TTS"""
+        """
+        Stream text to ElevenLabs for real-time TTS
+        Optimized for MINIMUM latency
+        """
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{config.ELEVENLABS_VOICE_ID}/stream"
         
         headers = {
@@ -152,16 +154,18 @@ class StreamingVoiceService:
                     
                     logger.info(f"Synthesizing: {text_chunk[:50]}...")
                     
+                    # CRITICAL: Optimized settings for lowest latency
                     data = {
                         "text": text_chunk,
                         "model_id": "eleven_turbo_v2_5",  # Latest turbo model
                         "voice_settings": {
-                            "stability": 0.3,  # Lower for faster
-                            "similarity_boost": 0.5,  # Lower for faster
-                            "style": 0,
-                            "use_speaker_boost": False
+                            "stability": 0.3,  # Lower = faster (0.0-1.0)
+                            "similarity_boost": 0.5,  # Lower = faster (0.0-1.0)
+                            "style": 0,  # Disable style for speed
+                            "use_speaker_boost": False  # Disable for speed
                         },
-                        "optimize_streaming_latency": 4  # Maximum optimization
+                        "optimize_streaming_latency": 4,  # Max optimization (0-4)
+                        "output_format": "mp3_22050_32"  # Lower quality = faster
                     }
                     
                     async with session.post(url, headers=headers, json=data) as response:
