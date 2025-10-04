@@ -270,6 +270,7 @@ class VoiceStreamHandler:
                 try:
                     full_text = ""
                     sentence_buffer = ""
+                    sentences_sent = 0
                     
                     async for chunk_data in self.agent.process_message_streaming(
                         session_id=self.session_id,
@@ -298,7 +299,8 @@ class VoiceStreamHandler:
                                         cleaned = clean_response_for_tts(complete_sentence.strip())
                                         
                                         if cleaned and len(cleaned) > 10:
-                                            logger.info(f"→ Streaming to TTS: {cleaned[:50]}...")
+                                            sentences_sent += 1
+                                            logger.info(f"→ Streaming sentence {sentences_sent} to TTS: {cleaned[:50]}...")
                                             await text_queue.put(cleaned)
                                 
                                 sentence_buffer = sentences[-1] if len(sentences) % 2 == 1 else ""
@@ -308,8 +310,11 @@ class VoiceStreamHandler:
                             if sentence_buffer.strip():
                                 cleaned = clean_response_for_tts(sentence_buffer.strip())
                                 if cleaned:
-                                    logger.info(f"→ Streaming final to TTS: {cleaned[:50]}...")
+                                    sentences_sent += 1
+                                    logger.info(f"→ Streaming final sentence {sentences_sent} to TTS: {cleaned[:50]}...")
                                     await text_queue.put(cleaned)
+                            
+                            logger.info(f"✓ LLM complete - sent {sentences_sent} sentences to TTS")
                         
                         elif chunk_type == 'error':
                             await self.send_error("Failed to process request")
@@ -317,6 +322,7 @@ class VoiceStreamHandler:
                     
                     # Signal end of text stream
                     await text_queue.put(None)
+                    logger.info("→ Sent EOS to TTS queue")
                     
                     # Send full text for display
                     if not self.interrupt_flag:

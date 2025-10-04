@@ -189,7 +189,7 @@ class StreamingVoiceService:
                                     data = json.loads(msg.data)
                                     
                                     # Check for audio data
-                                    if "audio" in data:
+                                    if "audio" in data and data["audio"]:
                                         # Decode base64 audio
                                         audio_bytes = base64.b64decode(data["audio"])
                                         chunk_count += 1
@@ -204,9 +204,16 @@ class StreamingVoiceService:
                                     if data.get("isFinal", False):
                                         logger.info(f"✓ TTS complete - received {chunk_count} chunks")
                                         break
+                                    
+                                    # Log other message types for debugging
+                                    if "audio" not in data:
+                                        logger.debug(f"Non-audio message: {data.keys()}")
                                 
                                 elif msg.type == aiohttp.WSMsgType.ERROR:
                                     logger.error(f"WS error: {ws.exception()}")
+                                    break
+                                elif msg.type == aiohttp.WSMsgType.CLOSED:
+                                    logger.info("ElevenLabs WS closed")
                                     break
                             
                         except Exception as e:
