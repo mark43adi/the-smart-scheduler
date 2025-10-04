@@ -216,7 +216,7 @@ class WebSocketVoiceManager {
     }
 
     async handleAudioChunk(audioData) {
-        // Queue audio chunk for immediate playback
+        // Queue audio chunk for sequential playback
         this.audioQueue.push(audioData);
         
         // Start playback if not already playing
@@ -256,12 +256,12 @@ class WebSocketVoiceManager {
                     if (chunkCount === 1) {
                         console.log('🎵 First audio chunk playing');
                     }
-                    if (chunkCount % 20 === 0) {
+                    if (chunkCount % 10 === 0) {
                         console.log(`🎵 Playing chunk ${chunkCount}`);
                     }
                     
-                    // Play immediately (don't wait for completion)
-                    this.playAudioBufferNonBlocking(audioBuffer);
+                    // CRITICAL: Play sequentially - WAIT for each chunk to finish
+                    await this.playAudioBuffer(audioBuffer);
                     
                 } catch (err) {
                     console.error('⚠️ Failed to decode audio chunk:', err);
@@ -278,24 +278,26 @@ class WebSocketVoiceManager {
         }
     }
 
-    playAudioBufferNonBlocking(audioBuffer) {
-        // Play without waiting for completion
-        if (!this.isAISpeaking) {
-            return; // Don't play if interrupted
-        }
-        
-        const source = this.audioContext.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(this.audioContext.destination);
-        
-        source.onended = () => {
-            if (this.currentAudioSource === source) {
-                this.currentAudioSource = null;
+    playAudioBuffer(audioBuffer) {
+        return new Promise((resolve) => {
+            // Check if interrupted before playing
+            if (!this.isAISpeaking) {
+                resolve();
+                return;
             }
-        };
-        
-        this.currentAudioSource = source;
-        source.start();
+            
+            const source = this.audioContext.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(this.audioContext.destination);
+            
+            source.onended = () => {
+                this.currentAudioSource = null;
+                resolve(); // Continue to next chunk
+            };
+            
+            this.currentAudioSource = source;
+            source.start();
+        });
     }
 
     stopAudioPlayback() {
