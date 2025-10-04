@@ -170,8 +170,9 @@ class WebSocketVoiceManager {
                 break;
 
             case 'audio_complete':
-                console.log('🔊 Audio stream complete');
-                this.isAISpeaking = false;
+                console.log('🔊 Audio stream complete - will finish playing queued chunks');
+                // DON'T set isAISpeaking = false yet!
+                // Let the playback loop finish naturally
                 
                 const endTime = Date.now();
                 if (this.responseStartTime) {
@@ -189,6 +190,7 @@ class WebSocketVoiceManager {
 
             case 'ready':
                 this.showStatus('Ready');
+                // NOW it's safe to mark as done
                 this.isAISpeaking = false;
                 if (this.lastSpeechEndTime) {
                     const totalLatency = Date.now() - this.lastSpeechEndTime;
@@ -234,15 +236,22 @@ class WebSocketVoiceManager {
         try {
             let chunkCount = 0;
             
-            // Keep playing while AI is speaking OR we have queued audio
-            while (this.isAISpeaking || this.audioQueue.length > 0) {
-                // Wait for audio if queue is empty
+            // Keep playing while we have queued audio
+            // Don't check isAISpeaking here - let queue drain completely
+            while (true) {
+                // Exit only when queue is truly empty
                 if (this.audioQueue.length === 0) {
-                    if (!this.isAISpeaking) {
-                        break; // AI stopped and no more audio
+                    // Wait a bit for more chunks if AI is still speaking
+                    if (this.isAISpeaking) {
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                        // Check again after waiting
+                        if (this.audioQueue.length === 0 && !this.isAISpeaking) {
+                            break; // AI done and no more audio
+                        }
+                        continue;
+                    } else {
+                        break; // AI done and queue empty
                     }
-                    await new Promise(resolve => setTimeout(resolve, 10));
-                    continue;
                 }
                 
                 // Get next audio chunk
@@ -256,11 +265,11 @@ class WebSocketVoiceManager {
                     if (chunkCount === 1) {
                         console.log('🎵 First audio chunk playing');
                     }
-                    if (chunkCount % 10 === 0) {
-                        console.log(`🎵 Playing chunk ${chunkCount}`);
+                    if (chunkCount % 5 === 0) {
+                        console.log(`🎵 Playing chunk ${chunkCount}, queue: ${this.audioQueue.length}`);
                     }
                     
-                    // CRITICAL: Play sequentially - WAIT for each chunk to finish
+                    // Play sequentially - WAIT for each chunk to finish
                     await this.playAudioBuffer(audioBuffer);
                     
                 } catch (err) {
@@ -275,6 +284,7 @@ class WebSocketVoiceManager {
             console.error('Playback error:', err);
         } finally {
             this.isPlayingAudio = false;
+            this.isAISpeaking = false; // Now mark as fully done
         }
     }
 
