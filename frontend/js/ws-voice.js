@@ -229,16 +229,20 @@ class WebSocketVoiceManager {
         // Accumulate chunks for current sentence
         this.currentSentenceBuffer.push(audioData);
         
-        // Heuristic: If we've accumulated enough data (64KB ~= 1 sentence from ElevenLabs)
-        // OR if we haven't started playing yet and have some data, finalize this sentence
         const bufferSize = this.currentSentenceBuffer.reduce((sum, chunk) => {
             return sum + (chunk.byteLength || chunk.length);
         }, 0);
+        
+        // Log every 10KB
+        if (bufferSize % 10000 < 1000) {
+            console.log(`📦 Buffer accumulated: ${Math.floor(bufferSize / 1000)}KB`);
+        }
         
         // Start playback quickly with first ~20KB, then every ~64KB after
         const threshold = this.audioStarted ? 64000 : 20000;
         
         if (bufferSize >= threshold) {
+            console.log(`🎬 Finalizing sentence (${Math.floor(bufferSize / 1000)}KB)`);
             await this.finalizeSentence();
         }
     }
@@ -280,16 +284,17 @@ class WebSocketVoiceManager {
         console.log('🔊 Starting streaming playback');
         
         try {
+            // Keep playing while AI is speaking OR while we have queued sentences
             while (this.isAISpeaking || this.sentenceQueue.length > 0) {
-                // Wait for sentences if queue is empty
+                // Wait for sentences if queue is empty but AI still speaking
                 if (this.sentenceQueue.length === 0) {
+                    if (!this.isAISpeaking) {
+                        // AI stopped and no more sentences - we're done
+                        break;
+                    }
+                    // AI still speaking, wait for more audio
                     await new Promise(resolve => setTimeout(resolve, 100));
                     continue;
-                }
-                
-                // Check if interrupted
-                if (!this.isAISpeaking && this.sentenceQueue.length === 0) {
-                    break;
                 }
                 
                 // Get next complete sentence audio
@@ -305,11 +310,7 @@ class WebSocketVoiceManager {
                         console.log('🎵 First audio playing');
                     }
                     
-                    // Check again before playing
-                    if (!this.isAISpeaking && this.sentenceQueue.length === 0) {
-                        break;
-                    }
-                    
+                    // Play even if AI stopped speaking (finish the queue)
                     await this.playAudioBuffer(audioBuffer);
                     
                 } catch (err) {

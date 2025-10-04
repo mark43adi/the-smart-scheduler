@@ -263,10 +263,10 @@ class VoiceStreamHandler:
             await self.send_message({"type": "audio_start"})
             self.is_ai_speaking = True
             
-            # Stream processing with aggressive sentence splitting
+            # Stream processing with sentence-by-sentence TTS
             full_text = ""
             sentence_buffer = ""
-            word_count = 0
+            sentences_sent = 0
             
             async for chunk_data in self.agent.process_message_streaming(
                 session_id=self.session_id,
@@ -285,33 +285,37 @@ class VoiceStreamHandler:
                     full_text += content
                     sentence_buffer += content
                     
-                    # Count words for aggressive splitting
-                    word_count += len(content.split())
-                    
-                    # Stream aggressively: every 8-12 words OR at punctuation
-                    should_stream = False
-                    
-                    if any(punct in sentence_buffer for punct in ['. ', '! ', '? ']):
-                        should_stream = True
-                    elif word_count >= 10:  # Stream every 10 words minimum
-                        should_stream = True
-                    
-                    if should_stream and sentence_buffer.strip():
-                        cleaned = clean_response_for_tts(sentence_buffer.strip())
+                    # Split on sentence boundaries (. ! ?)
+                    # Keep accumulating until we have a complete sentence
+                    if any(punct in sentence_buffer for punct in ['. ', '! ', '? ', '.\n', '!\n', '?\n']):
+                        # Split into sentences
+                        import re
+                        sentences = re.split(r'([.!?]+\s*)', sentence_buffer)
                         
-                        if cleaned and len(cleaned) > 15:  # Min 15 chars
-                            # WAIT for TTS to complete before moving on
-                            await self.stream_sentence_audio(cleaned)
-                            
-                            sentence_buffer = ""
-                            word_count = 0
+                        # Process complete sentences (pairs of text + punctuation)
+                        for i in range(0, len(sentences) - 1, 2):
+                            if i + 1 < len(sentences):
+                                complete_sentence = sentences[i] + sentences[i + 1]
+                                cleaned = clean_response_for_tts(complete_sentence.strip())
+                                
+                                if cleaned and len(cleaned) > 10:
+                                    logger.info(f"Streaming sentence {sentences_sent + 1}: {cleaned[:50]}...")
+                                    await self.stream_sentence_audio(cleaned)
+                                    sentences_sent += 1
+                        
+                        # Keep any remaining incomplete sentence
+                        sentence_buffer = sentences[-1] if len(sentences) % 2 == 1 else ""
                 
                 elif chunk_type == 'complete':
                     # Send any remaining text
                     if sentence_buffer.strip():
                         cleaned = clean_response_for_tts(sentence_buffer.strip())
                         if cleaned:
+                            logger.info(f"Streaming final fragment: {cleaned[:50]}...")
                             await self.stream_sentence_audio(cleaned)
+                            sentences_sent += 1
+                    
+                    logger.info(f"Total sentences streamed: {sentences_sent}")
                 
                 elif chunk_type == 'error':
                     await self.send_error("Failed to process request")
@@ -342,8 +346,10 @@ class VoiceStreamHandler:
             self.is_ai_speaking = False
     
     async def stream_sentence_audio(self, text: str):
-        """Stream single sentence to TTS and immediately to client"""
+        """Stream single sentence to TTS and immediately to client - WAITS for completion"""
         try:
+            logger.info(f"🎤 Starting TTS for: {text[:60]}...")
+            
             async def single_text_gen():
                 yield text
             
@@ -361,8 +367,10 @@ class VoiceStreamHandler:
                     logger.error(f"Send audio error: {e}")
                     break
             
-            if chunk_count > 0:
-                logger.debug(f"Streamed {chunk_count} audio chunks for: {text[:50]}...")
+            # CRITICAL: Small delay to ensure chunks are received before next sentence
+            await asyncio.sleep(0.05)
+            
+            logger.info(f"✅ Completed TTS - sent {chunk_count} chunks for: {text[:60]}...")
                 
         except asyncio.CancelledError:
             logger.info(f"TTS task cancelled: {text[:30]}...")
