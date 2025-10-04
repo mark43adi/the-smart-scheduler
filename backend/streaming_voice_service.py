@@ -154,11 +154,14 @@ class StreamingVoiceService:
                     
                     data = {
                         "text": text_chunk,
-                        "model_id": "eleven_turbo_v2",
+                        "model_id": "eleven_turbo_v2_5",  # Latest turbo model
                         "voice_settings": {
-                            "stability": 0.5,
-                            "similarity_boost": 0.75
-                        }
+                            "stability": 0.3,  # Lower for faster
+                            "similarity_boost": 0.5,  # Lower for faster
+                            "style": 0,
+                            "use_speaker_boost": False
+                        },
+                        "optimize_streaming_latency": 4  # Maximum optimization
                     }
                     
                     async with session.post(url, headers=headers, json=data) as response:

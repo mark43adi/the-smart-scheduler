@@ -210,87 +210,166 @@ class VoiceStreamHandler:
         except Exception as e:
             logger.error(f"Audio processor error: {e}", exc_info=True)
     
+    # async def process_query(self, query: str):
+    #     """Process query with agent and stream response"""
+    #     if self.is_processing:
+    #         logger.warning("Already processing a query")
+    #         return
+        
+    #     self.is_processing = True
+        
+    #     try:
+    #         # Notify thinking
+    #         await self.send_message({"type": "thinking"})
+            
+    #         # Process with agent
+    #         from tools_gcal import set_user_context
+    #         set_user_context(self.user)
+            
+    #         result = await self.agent.process_message(
+    #             session_id=self.session_id,
+    #             user_message=query,
+    #             user=self.user
+    #         )
+            
+    #         response_text = clean_response_for_tts(result['reply'])
+    #         tools_used = result.get('tools_used', [])
+            
+    #         # Send text response
+    #         await self.send_message({
+    #             "type": "response_text",
+    #             "text": response_text,
+    #             "tools_used": tools_used
+    #         })
+            
+    #         # Stream audio response
+    #         await self.stream_audio_response(response_text)
+            
+    #     except Exception as e:
+    #         logger.error(f"Query processing error: {e}", exc_info=True)
+    #         await self.send_error("Failed to process your request")
+    #     finally:
+    #         self.is_processing = False
+    
+    # async def stream_audio_response(self, text: str):
+    #     """Stream TTS audio to client"""
+    #     self.is_speaking = True
+        
+    #     try:
+    #         async def text_generator():
+    #             """Generator for streaming text to TTS"""
+    #             # Split into sentences for more natural speech
+    #             import re
+    #             sentences = re.split(r'([.!?]+)', text)
+                
+    #             for i in range(0, len(sentences), 2):
+    #                 if i < len(sentences):
+    #                     sentence = sentences[i]
+    #                     if i + 1 < len(sentences):
+    #                         sentence += sentences[i + 1]
+    #                     if sentence.strip():
+    #                         yield sentence
+    #                         await asyncio.sleep(0.01)
+            
+    #         # Stream audio chunks
+    #         async for audio_chunk in streaming_voice_service.synthesize_stream(text_generator()):
+    #             if not self.is_speaking or not self.is_connected:
+    #                 break
+                
+    #             try:
+    #                 await self.websocket.send_bytes(audio_chunk)
+    #             except Exception as e:
+    #                 logger.error(f"Send audio error: {e}")
+    #                 break
+            
+    #         # Notify completion
+    #         if self.is_speaking and self.is_connected:
+    #             await self.send_message({"type": "audio_complete"})
+    #             self.is_speaking = False
+    #             await self.send_message({"type": "ready"})
+                
+    #     except Exception as e:
+    #         logger.error(f"Audio streaming error: {e}", exc_info=True)
+    #         self.is_speaking = False
+    
     async def process_query(self, query: str):
-        """Process query with agent and stream response"""
+        """Process with streaming audio playback"""
         if self.is_processing:
-            logger.warning("Already processing a query")
             return
         
         self.is_processing = True
         
         try:
-            # Notify thinking
             await self.send_message({"type": "thinking"})
             
-            # Process with agent
             from tools_gcal import set_user_context
             set_user_context(self.user)
             
-            result = await self.agent.process_message(
+            # Signal audio start immediately
+            await self.send_message({"type": "audio_start"})
+            self.isSpeaking = True
+            
+            # Stream LLM + TTS concurrently
+            full_text = ""
+            sentence_buffer = ""
+            
+            async for text_chunk in self.agent.process_message(
                 session_id=self.session_id,
                 user_message=query,
                 user=self.user
-            )
+            ):
+                full_text += text_chunk
+                sentence_buffer += text_chunk
+                
+                # Send for TTS when we have a complete sentence
+                if any(p in sentence_buffer for p in ['. ', '! ', '? ', '\n']):
+                    cleaned = clean_response_for_tts(sentence_buffer)
+                    if cleaned:
+                        # Stream this sentence to TTS immediately
+                        await self.stream_sentence_audio(cleaned)
+                    sentence_buffer = ""
             
-            response_text = clean_response_for_tts(result['reply'])
-            tools_used = result.get('tools_used', [])
+            # Send remaining text
+            if sentence_buffer.strip():
+                cleaned = clean_response_for_tts(sentence_buffer)
+                if cleaned:
+                    await self.stream_sentence_audio(cleaned)
             
-            # Send text response
+            # Send complete text for display
             await self.send_message({
                 "type": "response_text",
-                "text": response_text,
-                "tools_used": tools_used
+                "text": clean_response_for_tts(full_text)
             })
             
-            # Stream audio response
-            await self.stream_audio_response(response_text)
+            await self.send_message({"type": "audio_complete"})
+            self.isSpeaking = False
+            await self.send_message({"type": "ready"})
             
         except Exception as e:
-            logger.error(f"Query processing error: {e}", exc_info=True)
-            await self.send_error("Failed to process your request")
+            logger.error(f"Error: {e}", exc_info=True)
+            await self.send_error("Failed to process request")
         finally:
             self.is_processing = False
-    
-    async def stream_audio_response(self, text: str):
-        """Stream TTS audio to client"""
-        self.is_speaking = True
-        
+
+    async def stream_sentence_audio(self, text: str):
+        """Stream single sentence to TTS and immediately to client"""
         try:
-            async def text_generator():
-                """Generator for streaming text to TTS"""
-                # Split into sentences for more natural speech
-                import re
-                sentences = re.split(r'([.!?]+)', text)
-                
-                for i in range(0, len(sentences), 2):
-                    if i < len(sentences):
-                        sentence = sentences[i]
-                        if i + 1 < len(sentences):
-                            sentence += sentences[i + 1]
-                        if sentence.strip():
-                            yield sentence
-                            await asyncio.sleep(0.01)
+            async def single_text():
+                yield text
             
-            # Stream audio chunks
-            async for audio_chunk in streaming_voice_service.synthesize_stream(text_generator()):
+            async for audio_chunk in streaming_voice_service.synthesize_stream(single_text()):
                 if not self.is_speaking or not self.is_connected:
                     break
                 
                 try:
+                    # Send immediately - don't buffer
                     await self.websocket.send_bytes(audio_chunk)
                 except Exception as e:
-                    logger.error(f"Send audio error: {e}")
+                    logger.error(f"Send error: {e}")
                     break
-            
-            # Notify completion
-            if self.is_speaking and self.is_connected:
-                await self.send_message({"type": "audio_complete"})
-                self.is_speaking = False
-                await self.send_message({"type": "ready"})
-                
+                    
         except Exception as e:
-            logger.error(f"Audio streaming error: {e}", exc_info=True)
-            self.is_speaking = False
+            logger.error(f"Sentence audio error: {e}", exc_info=True)
     
     async def silence_monitor(self):
         """Monitor for prolonged silence"""

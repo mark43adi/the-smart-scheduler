@@ -12,6 +12,10 @@ class WebSocketVoiceManager {
         // Audio accumulation for complete playback
         this.audioChunks = [];
         this.currentAudioSource = null;
+
+        this.audioQueue = [];
+        this.isPlaying = false;
+        this.playbackStartTime = null;
     }
 
     async initialize() {
@@ -201,24 +205,36 @@ class WebSocketVoiceManager {
                 this.hideThinking();
                 break;
 
-            case 'audio_start':
-                this.responseStartTime = Date.now();
-                if (this.lastSpeechEndTime) {
-                    const latency = this.responseStartTime - this.lastSpeechEndTime;
-                    console.log(`⏱️ Latency (speech_end → audio_start): ${latency} ms`);
-                }
-                console.log('🔊 AI starting to speak');
-                this.isSpeaking = true;
-                break;
+            // case 'audio_start':
+            //     this.responseStartTime = Date.now();
+            //     if (this.lastSpeechEndTime) {
+            //         const latency = this.responseStartTime - this.lastSpeechEndTime;
+            //         console.log(`⏱️ Latency (speech_end → audio_start): ${latency} ms`);
+            //     }
+            //     console.log('🔊 AI starting to speak');
+            //     this.isSpeaking = true;
+            //     break;
 
+            // case 'audio_complete':
+            //     console.log('🔊 Audio streaming complete, playing accumulated audio');
+            //     const endTime = Date.now();
+            //     if (this.responseStartTime) {
+            //         const playbackLatency = endTime - this.responseStartTime;
+            //         console.log(`⏱️ AI streaming duration: ${playbackLatency} ms`);
+            //     }
+            //     await this.playAccumulatedAudio();
+            //     break;
+
+            case 'audio_start':
+                this.playbackStartTime = Date.now();
+                console.log('🔊 Audio stream starting');
+                this.isSpeaking = true;
+                // Start playback immediately
+                this.startStreamingPlayback();
+                break;
+                
             case 'audio_complete':
-                console.log('🔊 Audio streaming complete, playing accumulated audio');
-                const endTime = Date.now();
-                if (this.responseStartTime) {
-                    const playbackLatency = endTime - this.responseStartTime;
-                    console.log(`⏱️ AI streaming duration: ${playbackLatency} ms`);
-                }
-                await this.playAccumulatedAudio();
+                console.log('🔊 Audio stream complete');
                 break;
 
             case 'ready':
@@ -241,14 +257,58 @@ class WebSocketVoiceManager {
 
 
     // 🔊 Handle MP3 audio from ElevenLabs
+    // async handleAudioChunk(audioData) {
+    //     // Don't queue individual chunks - they're incomplete MP3 fragments
+    //     // Instead, accumulate them
+    //     if (!this.audioChunks) {
+    //         this.audioChunks = [];
+    //     }
+    //     this.audioChunks.push(audioData);
+    //     this.isSpeaking = true;
+    // }
+
     async handleAudioChunk(audioData) {
-        // Don't queue individual chunks - they're incomplete MP3 fragments
-        // Instead, accumulate them
-        if (!this.audioChunks) {
-            this.audioChunks = [];
+        // Queue audio chunks for streaming playback
+        this.audioQueue.push(audioData);
+        
+        // Start playing if not already
+        if (!this.isPlaying && this.isSpeaking) {
+            this.startStreamingPlayback();
         }
-        this.audioChunks.push(audioData);
-        this.isSpeaking = true;
+    }
+
+
+    async startStreamingPlayback() {
+        if (this.isPlaying) return;
+        this.isPlaying = true;
+        
+        try {
+            while (this.isSpeaking || this.audioQueue.length > 0) {
+                if (this.audioQueue.length === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 50));
+                    continue;
+                }
+                
+                // Get next chunk
+                const chunk = this.audioQueue.shift();
+                
+                try {
+                    // Decode and play immediately
+                    const audioBuffer = await this.audioContext.decodeAudioData(chunk);
+                    await this.playAudioBuffer(audioBuffer);
+                } catch (err) {
+                    console.warn('Decode error (partial chunk):', err);
+                    // Continue - might be incomplete MP3 fragment
+                }
+            }
+            
+            console.log('✓ Streaming playback complete');
+            
+        } catch (err) {
+            console.error('Playback error:', err);
+        } finally {
+            this.isPlaying = false;
+        }
     }
 
     async playAccumulatedAudio() {
@@ -294,11 +354,7 @@ class WebSocketVoiceManager {
             const source = this.audioContext.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(this.audioContext.destination);
-            source.onended = () => {
-                this.currentAudioSource = null;
-                resolve();
-            };
-            this.currentAudioSource = source;
+            source.onended = resolve;
             source.start();
         });
     }

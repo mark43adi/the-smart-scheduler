@@ -1,5 +1,5 @@
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, AsyncGenerator
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
@@ -157,165 +157,223 @@ class SmartSchedulerAgent:
         
         return user_message
 
-    async def process_message(self, session_id: str, user_message: str, user: User) -> Dict[str, Any]:
-        """
-        Main conversation flow with context awareness
+    # async def process_message(self, session_id: str, user_message: str, user: User) -> Dict[str, Any]:
+    #     """
+    #     Main conversation flow with context awareness
         
-        Args:
-            session_id: Unique session identifier
-            user_message: User's message text
-            user: User object from database
+    #     Args:
+    #         session_id: Unique session identifier
+    #         user_message: User's message text
+    #         user: User object from database
         
-        Returns:
-            Dictionary with reply, tools_used, and metadata
-        """
-        logger.info(f"[Session: {session_id}] [User: {user.email}] Processing message: '{user_message[:100]}...'")
+    #     Returns:
+    #         Dictionary with reply, tools_used, and metadata
+    #     """
+    #     logger.info(f"[Session: {session_id}] [User: {user.email}] Processing message: '{user_message[:100]}...'")
         
-        # CRITICAL: Set user context for tools BEFORE any tool execution
+    #     # CRITICAL: Set user context for tools BEFORE any tool execution
+    #     set_user_context(user)
+        
+    #     state = self.get_or_create_session(session_id)
+        
+    #     # Add user info to metadata
+    #     state.metadata['user_email'] = user.email
+    #     state.metadata['user_name'] = user.name
+    #     state.metadata['is_main_account'] = user.is_main_account
+
+    #     # Enrich message with extracted information
+    #     enriched_message = self._enrich_user_message(user_message, state)
+        
+    #     # Add user message to conversation history
+    #     state.add_message(HumanMessage(content=enriched_message))
+        
+    #     # Prepare LLM with tools
+    #     llm = get_llm().bind_tools(self.tools)
+        
+    #     try:
+    #         # Step 1: LLM processes message and decides action
+    #         logger.info(f"[Session: {session_id}] Invoking LLM with {len(state.messages)} messages in history")
+            
+    #         # Use recent messages to stay within context limits
+    #         recent_messages = state.get_recent_messages()
+    #         response = await llm.ainvoke(recent_messages)
+            
+    #         logger.info(f"[Session: {session_id}] LLM response received")
+    #         logger.debug(f"[Session: {session_id}] Response content length: {len(response.content) if response.content else 0}")
+            
+    #         # Check if LLM wants to call tools
+    #         tool_calls = getattr(response, "tool_calls", None) or []
+            
+    #         if tool_calls:
+    #             logger.info(f"[Session: {session_id}] LLM requested {len(tool_calls)} tool call(s)")
+                
+    #             # Add AI message with tool calls to history
+    #             state.add_message(response)
+                
+    #             # Step 2: Execute all requested tools
+    #             tool_results = []
+    #             for idx, tool_call in enumerate(tool_calls):
+    #                 tool_name = tool_call.get("name")
+    #                 tool_args = tool_call.get("args", {})
+    #                 tool_id = tool_call.get("id")
+                    
+    #                 logger.info(f"[Session: {session_id}] Executing tool {idx+1}/{len(tool_calls)}: {tool_name}")
+    #                 logger.debug(f"[Session: {session_id}] Tool arguments: {json.dumps(tool_args, indent=2)}")
+                    
+    #                 try:
+    #                     # Execute the tool (user context already set)
+    #                     result = await self._execute_tool(tool_name, tool_args)
+                        
+    #                     logger.info(f"[Session: {session_id}] Tool {tool_name} executed successfully")
+    #                     logger.debug(f"[Session: {session_id}] Tool result preview: {str(result)[:300]}...")
+                        
+    #                     tool_results.append({
+    #                         "tool": tool_name,
+    #                         "args": tool_args,
+    #                         "result": result,
+    #                         "success": True
+    #                     })
+                        
+    #                     # Add tool result to conversation history
+    #                     tool_message = ToolMessage(
+    #                         content=json.dumps(result, default=str),
+    #                         tool_call_id=tool_id
+    #                     )
+    #                     state.add_message(tool_message)
+                        
+    #                 except Exception as e:
+    #                     logger.error(f"[Session: {session_id}] Tool {tool_name} failed: {str(e)}", exc_info=True)
+                        
+    #                     error_result = {
+    #                         "error": str(e),
+    #                         "tool": tool_name,
+    #                         "args": tool_args
+    #                     }
+    #                     tool_results.append({
+    #                         "tool": tool_name,
+    #                         "args": tool_args,
+    #                         "result": error_result,
+    #                         "success": False
+    #                     })
+                        
+    #                     # Add error message to history
+    #                     tool_message = ToolMessage(
+    #                         content=json.dumps(error_result),
+    #                         tool_call_id=tool_id
+    #                     )
+    #                     state.add_message(tool_message)
+                
+    #             # Step 3: Feed tool results back to LLM for final response
+    #             logger.info(f"[Session: {session_id}] Feeding {len(tool_results)} tool results back to LLM")
+                
+    #             recent_messages = state.get_recent_messages()
+    #             final_response = await llm.ainvoke(recent_messages)
+                
+    #             # Add final response to history
+    #             state.add_message(final_response)
+                
+    #             logger.info(f"[Session: {session_id}] Final response generated after tool execution")
+                
+    #             return {
+    #                 "session_id": session_id,
+    #                 "reply": final_response.content,
+    #                 "tools_used": tool_results,
+    #                 "metadata": state.metadata,
+    #                 "turn_count": state.turn_count,
+    #                 "timestamp": datetime.now().isoformat()
+    #             }
+            
+    #         else:
+    #             # No tools called, direct response
+    #             logger.info(f"[Session: {session_id}] Direct response (no tools called)")
+                
+    #             # Add AI response to history
+    #             state.add_message(response)
+                
+    #             return {
+    #                 "session_id": session_id,
+    #                 "reply": response.content,
+    #                 "tools_used": [],
+    #                 "metadata": state.metadata,
+    #                 "turn_count": state.turn_count,
+    #                 "timestamp": datetime.now().isoformat()
+    #             }
+        
+    #     except Exception as e:
+    #         logger.error(f"[Session: {session_id}] Error in process_message: {str(e)}", exc_info=True)
+            
+    #         error_response = (
+    #             "I apologize, but I encountered an error processing your request. "
+    #             "Could you please try again or rephrase your question?"
+    #         )
+            
+    #         return {
+    #             "session_id": session_id,
+    #             "reply": error_response,
+    #             "tools_used": [],
+    #             "error": str(e),
+    #             "metadata": state.metadata,
+    #             "turn_count": state.turn_count,
+    #             "timestamp": datetime.now().isoformat()
+    #         }
+
+
+    async def process_message(self, session_id: str, user_message: str, user: User) -> AsyncGenerator[str, None]:
+        """Stream LLM responses token by token"""
+        logger.info(f"[Session: {session_id}] Processing message")
+        
         set_user_context(user)
-        
         state = self.get_or_create_session(session_id)
         
-        # Add user info to metadata
-        state.metadata['user_email'] = user.email
-        state.metadata['user_name'] = user.name
-        state.metadata['is_main_account'] = user.is_main_account
-
-        # Enrich message with extracted information
         enriched_message = self._enrich_user_message(user_message, state)
-        
-        # Add user message to conversation history
         state.add_message(HumanMessage(content=enriched_message))
         
-        # Prepare LLM with tools
         llm = get_llm().bind_tools(self.tools)
         
         try:
-            # Step 1: LLM processes message and decides action
-            logger.info(f"[Session: {session_id}] Invoking LLM with {len(state.messages)} messages in history")
-            
-            # Use recent messages to stay within context limits
             recent_messages = state.get_recent_messages()
-            response = await llm.ainvoke(recent_messages)
             
-            logger.info(f"[Session: {session_id}] LLM response received")
-            logger.debug(f"[Session: {session_id}] Response content length: {len(response.content) if response.content else 0}")
+            # STREAM the initial response
+            response_content = ""
+            tool_calls = []
             
-            # Check if LLM wants to call tools
-            tool_calls = getattr(response, "tool_calls", None) or []
+            async for chunk in llm.astream(recent_messages):
+                # Accumulate for tool detection
+                if hasattr(chunk, 'content') and chunk.content:
+                    response_content += chunk.content
+                    # Yield immediately for TTS
+                    yield chunk.content
+                
+                # Collect tool calls
+                if hasattr(chunk, 'tool_calls') and chunk.tool_calls:
+                    tool_calls.extend(chunk.tool_calls)
             
+            # Handle tool calls if any
             if tool_calls:
-                logger.info(f"[Session: {session_id}] LLM requested {len(tool_calls)} tool call(s)")
-                
-                # Add AI message with tool calls to history
-                state.add_message(response)
-                
-                # Step 2: Execute all requested tools
+                # Execute tools
                 tool_results = []
-                for idx, tool_call in enumerate(tool_calls):
-                    tool_name = tool_call.get("name")
-                    tool_args = tool_call.get("args", {})
-                    tool_id = tool_call.get("id")
+                for tool_call in tool_calls:
+                    result = await self._execute_tool(
+                        tool_call.get("name"), 
+                        tool_call.get("args", {})
+                    )
+                    tool_results.append(result)
                     
-                    logger.info(f"[Session: {session_id}] Executing tool {idx+1}/{len(tool_calls)}: {tool_name}")
-                    logger.debug(f"[Session: {session_id}] Tool arguments: {json.dumps(tool_args, indent=2)}")
-                    
-                    try:
-                        # Execute the tool (user context already set)
-                        result = await self._execute_tool(tool_name, tool_args)
-                        
-                        logger.info(f"[Session: {session_id}] Tool {tool_name} executed successfully")
-                        logger.debug(f"[Session: {session_id}] Tool result preview: {str(result)[:300]}...")
-                        
-                        tool_results.append({
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "result": result,
-                            "success": True
-                        })
-                        
-                        # Add tool result to conversation history
-                        tool_message = ToolMessage(
-                            content=json.dumps(result, default=str),
-                            tool_call_id=tool_id
-                        )
-                        state.add_message(tool_message)
-                        
-                    except Exception as e:
-                        logger.error(f"[Session: {session_id}] Tool {tool_name} failed: {str(e)}", exc_info=True)
-                        
-                        error_result = {
-                            "error": str(e),
-                            "tool": tool_name,
-                            "args": tool_args
-                        }
-                        tool_results.append({
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "result": error_result,
-                            "success": False
-                        })
-                        
-                        # Add error message to history
-                        tool_message = ToolMessage(
-                            content=json.dumps(error_result),
-                            tool_call_id=tool_id
-                        )
-                        state.add_message(tool_message)
+                    # Add tool message
+                    state.add_message(ToolMessage(
+                        content=json.dumps(result, default=str),
+                        tool_call_id=tool_call.get("id")
+                    ))
                 
-                # Step 3: Feed tool results back to LLM for final response
-                logger.info(f"[Session: {session_id}] Feeding {len(tool_results)} tool results back to LLM")
-                
-                recent_messages = state.get_recent_messages()
-                final_response = await llm.ainvoke(recent_messages)
-                
-                # Add final response to history
-                state.add_message(final_response)
-                
-                logger.info(f"[Session: {session_id}] Final response generated after tool execution")
-                
-                return {
-                    "session_id": session_id,
-                    "reply": final_response.content,
-                    "tools_used": tool_results,
-                    "metadata": state.metadata,
-                    "turn_count": state.turn_count,
-                    "timestamp": datetime.now().isoformat()
-                }
+                # Stream final response with tool context
+                async for chunk in llm.astream(state.get_recent_messages()):
+                    if hasattr(chunk, 'content') and chunk.content:
+                        yield chunk.content
             
-            else:
-                # No tools called, direct response
-                logger.info(f"[Session: {session_id}] Direct response (no tools called)")
-                
-                # Add AI response to history
-                state.add_message(response)
-                
-                return {
-                    "session_id": session_id,
-                    "reply": response.content,
-                    "tools_used": [],
-                    "metadata": state.metadata,
-                    "turn_count": state.turn_count,
-                    "timestamp": datetime.now().isoformat()
-                }
-        
         except Exception as e:
-            logger.error(f"[Session: {session_id}] Error in process_message: {str(e)}", exc_info=True)
-            
-            error_response = (
-                "I apologize, but I encountered an error processing your request. "
-                "Could you please try again or rephrase your question?"
-            )
-            
-            return {
-                "session_id": session_id,
-                "reply": error_response,
-                "tools_used": [],
-                "error": str(e),
-                "metadata": state.metadata,
-                "turn_count": state.turn_count,
-                "timestamp": datetime.now().isoformat()
-            }
+            logger.error(f"Error: {e}", exc_info=True)
+            yield "I apologize, but I encountered an error."
+    
 
     async def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
         """
