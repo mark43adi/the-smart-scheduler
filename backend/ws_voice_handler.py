@@ -16,34 +16,19 @@ def clean_response_for_tts(text: str) -> str:
     if not text:
         return ""
     
-    # Remove markdown formatting
     text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
     text = re.sub(r'\*([^*]+)\*', r'\1', text)
     text = re.sub(r'__([^_]+)__', r'\1', text)
     text = re.sub(r'_([^_]+)_', r'\1', text)
-    
-    # Remove headers
     text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
-    
-    # Remove list markers
     text = re.sub(r'^\s*[-*•]\s+', '', text, flags=re.MULTILINE)
     text = re.sub(r'^\s*\d+[\.)]\s+', '', text, flags=re.MULTILINE)
-    
-    # Remove links
     text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
-    
-    # Remove code blocks
     text = re.sub(r'`([^`]+)`', r'\1', text)
     text = re.sub(r'^\s*>\s+', '', text, flags=re.MULTILINE)
-    
-    # Clean time formats
     text = re.sub(r'\b(\d{1,2}):00\s*(AM|PM|am|pm)\b', r'\1 \2', text)
-    
-    # Clean whitespace
     text = re.sub(r'\n\s*\n', '\n', text)
     text = re.sub(r'\s+', ' ', text)
-    
-    # Remove special symbols
     text = re.sub(r'[→←↑↓➜➝✓✗✘✔︎×]', '', text)
     text = re.sub(r'\(\s*\)', '', text)
     text = re.sub(r'\.{2,}', '.', text)
@@ -54,7 +39,7 @@ def clean_response_for_tts(text: str) -> str:
 
 
 class VoiceStreamHandler:
-    """Handles real-time voice conversation with smart interruption"""
+    """Ultra-low latency voice handler with true streaming"""
     
     def __init__(self, websocket: WebSocket, user: User, agent):
         self.websocket = websocket
@@ -66,7 +51,7 @@ class VoiceStreamHandler:
         self.is_connected = True
         self.is_processing = False
         
-        # Speech detection state
+        # Speech state
         self.is_user_speaking = False
         self.is_ai_speaking = False
         self.last_activity = time.time()
@@ -74,16 +59,16 @@ class VoiceStreamHandler:
         
         # Audio management
         self.audio_queue = asyncio.Queue()
-        self.tts_tasks = []  # Track active TTS tasks for interruption
-        self.interrupt_flag = False  # Signal to stop TTS
+        self.interrupt_flag = False
+        self.tts_task = None
         
-        logger.info(f"VoiceStreamHandler created for user: {user.email}, session: {self.session_id}")
+        logger.info(f"VoiceStreamHandler created: {user.email}, session: {self.session_id}")
     
     async def handle_connection(self):
         """Main connection handler"""
         try:
             await self.websocket.accept()
-            logger.info(f"WebSocket accepted for session: {self.session_id}")
+            logger.info(f"WebSocket accepted: {self.session_id}")
             
             await self.send_message({
                 "type": "connected",
@@ -91,7 +76,6 @@ class VoiceStreamHandler:
                 "message": "Voice connection established"
             })
             
-            # Start parallel tasks
             tasks = [
                 asyncio.create_task(self.audio_receiver()),
                 asyncio.create_task(self.audio_processor()),
@@ -103,7 +87,6 @@ class VoiceStreamHandler:
                 return_when=asyncio.FIRST_COMPLETED
             )
             
-            # Cancel remaining tasks
             for task in pending:
                 task.cancel()
                 try:
@@ -129,11 +112,7 @@ class VoiceStreamHandler:
                     
                     if "bytes" in message:
                         self.last_activity = time.time()
-                        
-                        # Mark user as speaking (STT will confirm with actual words)
                         self.is_user_speaking = True
-                        
-                        # Queue audio for STT processing
                         await self.audio_queue.put(message["bytes"])
                         
                     elif "text" in message:
@@ -148,7 +127,7 @@ class VoiceStreamHandler:
         except Exception as e:
             logger.error(f"Audio receiver error: {e}", exc_info=True)
         finally:
-            await self.audio_queue.put(None)  # Signal end
+            await self.audio_queue.put(None)
     
     async def audio_processor(self):
         """Process audio with Deepgram STT"""
@@ -156,7 +135,6 @@ class VoiceStreamHandler:
         
         try:
             async def audio_generator():
-                """Generator yielding audio chunks"""
                 while self.is_connected:
                     try:
                         chunk = await asyncio.wait_for(
@@ -172,26 +150,22 @@ class VoiceStreamHandler:
                         logger.error(f"Generator error: {e}")
                         break
             
-            # Callbacks for Deepgram
             async def on_partial(text: str):
-                """Handle partial transcripts (interim results)"""
+                """Handle partial transcripts"""
                 nonlocal accumulated_transcript
                 accumulated_transcript = text
-                
-                # Send to frontend for display
                 await self.send_message({
                     "type": "partial_transcript",
                     "text": text
                 })
             
             async def on_final(text: str):
-                """Handle final transcripts - ONLY interrupt on meaningful speech"""
+                """Handle final transcripts - check for meaningful interruption"""
                 nonlocal accumulated_transcript
                 
                 if not text.strip():
                     return
                 
-                # Clean and validate the transcript
                 cleaned_text = text.strip()
                 word_count = len(cleaned_text.split())
                 
@@ -199,10 +173,9 @@ class VoiceStreamHandler:
                 accumulated_transcript = ""
                 self.last_activity = time.time()
                 
-                # CRITICAL: Only interrupt if this is MEANINGFUL speech
-                # Filter out noise, single words, or very short utterances
-                MIN_WORDS_FOR_INTERRUPTION = 2  # At least 2 words
-                MIN_CHARS_FOR_INTERRUPTION = 6  # At least 6 characters
+                # INTERRUPTION LOGIC: Only meaningful speech interrupts
+                MIN_WORDS_FOR_INTERRUPTION = 2
+                MIN_CHARS_FOR_INTERRUPTION = 6
                 
                 is_meaningful_speech = (
                     word_count >= MIN_WORDS_FOR_INTERRUPTION and 
@@ -210,27 +183,22 @@ class VoiceStreamHandler:
                 )
                 
                 if self.is_ai_speaking and is_meaningful_speech:
-                    logger.warning(f"🛑 INTERRUPTION DETECTED: User said '{cleaned_text}' while AI speaking")
+                    logger.warning(f"🛑 INTERRUPTION: User said '{cleaned_text}' while AI speaking")
                     await self.interrupt_ai_speech()
                 elif self.is_ai_speaking and not is_meaningful_speech:
-                    logger.info(f"⚠️ Ignoring noise/short utterance during AI speech: '{cleaned_text}'")
-                    # Don't send transcript or process - just ignore
+                    logger.info(f"⚠️ Ignoring noise during AI speech: '{cleaned_text}'")
                     return
                 
-                # Send confirmed transcript only if not noise
+                # Send confirmed transcript
                 await self.send_message({
                     "type": "transcript",
                     "text": cleaned_text
                 })
                 
-                # Reset user speaking flag
                 self.is_user_speaking = False
-                
-                # Process the query
                 await self.process_query(cleaned_text)
-                
-                
-            # Start Deepgram transcription stream
+            
+            # Start Deepgram transcription
             await streaming_voice_service.transcribe_stream(
                 audio_stream=audio_generator(),
                 on_transcript=on_partial,
@@ -242,29 +210,27 @@ class VoiceStreamHandler:
     
     async def interrupt_ai_speech(self):
         """Interrupt AI speech immediately"""
-        logger.info("Interrupting AI speech...")
+        logger.info("🛑 Interrupting AI speech...")
         
-        # Set interrupt flag
         self.interrupt_flag = True
         self.is_ai_speaking = False
         
-        # Cancel all active TTS tasks
-        for task in self.tts_tasks:
-            if not task.done():
-                task.cancel()
-        self.tts_tasks.clear()
+        # Cancel TTS task
+        if self.tts_task and not self.tts_task.done():
+            self.tts_task.cancel()
+            try:
+                await self.tts_task
+            except asyncio.CancelledError:
+                pass
         
-        # Notify client
+        # Notify frontend to stop playback
         await self.send_message({"type": "interrupted"})
         
-        # Small delay to ensure cancellation
         await asyncio.sleep(0.1)
-        
-        # Reset interrupt flag
         self.interrupt_flag = False
     
     async def process_query(self, query: str):
-        """Process query with streaming LLM → TTS → Audio"""
+        """Process query with TRUE streaming: LLM → ElevenLabs WS → Frontend"""
         if self.is_processing:
             logger.warning("Already processing a query")
             return
@@ -280,77 +246,129 @@ class VoiceStreamHandler:
             # Signal audio start
             await self.send_message({"type": "audio_start"})
             self.is_ai_speaking = True
+            self.interrupt_flag = False
             
-            # Stream processing with sentence-by-sentence TTS
-            full_text = ""
-            sentence_buffer = ""
-            sentences_sent = 0
+            # Create text stream for TTS
+            text_queue = asyncio.Queue()
+            tts_complete = asyncio.Event()
             
-            async for chunk_data in self.agent.process_message_streaming(
-                session_id=self.session_id,
-                user_message=query,
-                user=self.user
-            ):
-                # Check for interruption
-                if self.interrupt_flag:
-                    logger.info("Stream interrupted by user speech")
-                    break
-                
-                chunk_type = chunk_data.get('type')
-                
-                if chunk_type == 'content_chunk':
-                    content = chunk_data.get('content', '')
-                    full_text += content
-                    sentence_buffer += content
+            async def text_generator():
+                """Generator that yields text chunks for TTS"""
+                try:
+                    while True:
+                        text = await text_queue.get()
+                        if text is None:  # End signal
+                            break
+                        if self.interrupt_flag:
+                            break
+                        yield text
+                except Exception as e:
+                    logger.error(f"Text generator error: {e}")
+            
+            async def stream_llm_to_tts():
+                """Stream LLM tokens to TTS as they arrive"""
+                try:
+                    full_text = ""
+                    sentence_buffer = ""
                     
-                    # Split on sentence boundaries (. ! ?)
-                    # Keep accumulating until we have a complete sentence
-                    if any(punct in sentence_buffer for punct in ['. ', '! ', '? ', '.\n', '!\n', '?\n']):
-                        # Split into sentences
-                        import re
-                        sentences = re.split(r'([.!?]+\s*)', sentence_buffer)
+                    async for chunk_data in self.agent.process_message_streaming(
+                        session_id=self.session_id,
+                        user_message=query,
+                        user=self.user
+                    ):
+                        if self.interrupt_flag:
+                            logger.info("LLM stream interrupted")
+                            break
                         
-                        # Process complete sentences (pairs of text + punctuation)
-                        for i in range(0, len(sentences) - 1, 2):
-                            if i + 1 < len(sentences):
-                                complete_sentence = sentences[i] + sentences[i + 1]
-                                cleaned = clean_response_for_tts(complete_sentence.strip())
+                        chunk_type = chunk_data.get('type')
+                        
+                        if chunk_type == 'content_chunk':
+                            content = chunk_data.get('content', '')
+                            full_text += content
+                            sentence_buffer += content
+                            
+                            # Send complete sentences to TTS immediately
+                            if any(punct in sentence_buffer for punct in ['. ', '! ', '? ', '.\n', '!\n', '?\n']):
+                                import re
+                                sentences = re.split(r'([.!?]+\s*)', sentence_buffer)
                                 
-                                if cleaned and len(cleaned) > 10:
-                                    logger.info(f"Streaming sentence {sentences_sent + 1}: {cleaned[:50]}...")
-                                    await self.stream_sentence_audio(cleaned)
-                                    sentences_sent += 1
+                                for i in range(0, len(sentences) - 1, 2):
+                                    if i + 1 < len(sentences):
+                                        complete_sentence = sentences[i] + sentences[i + 1]
+                                        cleaned = clean_response_for_tts(complete_sentence.strip())
+                                        
+                                        if cleaned and len(cleaned) > 10:
+                                            logger.info(f"→ Streaming to TTS: {cleaned[:50]}...")
+                                            await text_queue.put(cleaned)
+                                
+                                sentence_buffer = sentences[-1] if len(sentences) % 2 == 1 else ""
                         
-                        # Keep any remaining incomplete sentence
-                        sentence_buffer = sentences[-1] if len(sentences) % 2 == 1 else ""
-                
-                elif chunk_type == 'complete':
-                    # Send any remaining text
-                    if sentence_buffer.strip():
-                        cleaned = clean_response_for_tts(sentence_buffer.strip())
-                        if cleaned:
-                            logger.info(f"Streaming final fragment: {cleaned[:50]}...")
-                            await self.stream_sentence_audio(cleaned)
-                            sentences_sent += 1
+                        elif chunk_type == 'complete':
+                            # Send remaining text
+                            if sentence_buffer.strip():
+                                cleaned = clean_response_for_tts(sentence_buffer.strip())
+                                if cleaned:
+                                    logger.info(f"→ Streaming final to TTS: {cleaned[:50]}...")
+                                    await text_queue.put(cleaned)
+                        
+                        elif chunk_type == 'error':
+                            await self.send_error("Failed to process request")
+                            return
                     
-                    logger.info(f"Total sentences streamed: {sentences_sent}")
-                
-                elif chunk_type == 'error':
-                    await self.send_error("Failed to process request")
-                    return
+                    # Signal end of text stream
+                    await text_queue.put(None)
+                    
+                    # Send full text for display
+                    if not self.interrupt_flag:
+                        cleaned_full = clean_response_for_tts(full_text)
+                        await self.send_message({
+                            "type": "response_text",
+                            "text": cleaned_full
+                        })
+                    
+                except Exception as e:
+                    logger.error(f"LLM streaming error: {e}", exc_info=True)
+                    await text_queue.put(None)
             
-            # CRITICAL: Wait a moment to ensure all audio chunks are sent
-            await asyncio.sleep(0.3)
+            async def stream_tts_to_frontend():
+                """Stream TTS audio directly to frontend as it's generated"""
+                try:
+                    async def on_audio_chunk(audio_bytes: bytes):
+                        """Callback for each audio chunk from ElevenLabs"""
+                        if self.interrupt_flag or not self.is_connected:
+                            return
+                        
+                        try:
+                            await self.websocket.send_bytes(audio_bytes)
+                        except Exception as e:
+                            logger.error(f"Send audio error: {e}")
+                    
+                    # Start ElevenLabs WebSocket TTS
+                    await streaming_voice_service.synthesize_stream_ws(
+                        text_stream=text_generator(),
+                        on_audio_chunk=on_audio_chunk
+                    )
+                    
+                    logger.info("✓ TTS streaming complete")
+                    tts_complete.set()
+                    
+                except Exception as e:
+                    logger.error(f"TTS streaming error: {e}", exc_info=True)
+                    tts_complete.set()
             
-            # Send complete text for display
+            # Run LLM and TTS concurrently for TRUE streaming
+            self.tts_task = asyncio.create_task(stream_tts_to_frontend())
+            await asyncio.gather(
+                stream_llm_to_tts(),
+                self.tts_task,
+                return_exceptions=True
+            )
+            
+            # Wait for TTS to complete
+            await tts_complete.wait()
+            
+            # Signal completion
             if not self.interrupt_flag:
-                cleaned_full = clean_response_for_tts(full_text)
-                await self.send_message({
-                    "type": "response_text",
-                    "text": cleaned_full
-                })
-                
-                # Now signal audio is truly complete
                 await self.send_message({"type": "audio_complete"})
             
             self.is_ai_speaking = False
@@ -362,38 +380,6 @@ class VoiceStreamHandler:
         finally:
             self.is_processing = False
             self.is_ai_speaking = False
-    
-    async def stream_sentence_audio(self, text: str):
-        """Stream single sentence to TTS and immediately to client - WAITS for completion"""
-        try:
-            logger.info(f"🎤 Starting TTS for: {text[:60]}...")
-            
-            async def single_text_gen():
-                yield text
-            
-            chunk_count = 0
-            async for audio_chunk in streaming_voice_service.synthesize_stream(single_text_gen()):
-                # Check for interruption
-                if self.interrupt_flag or not self.is_ai_speaking or not self.is_connected:
-                    logger.info(f"TTS interrupted for: {text[:30]}...")
-                    break
-                
-                try:
-                    await self.websocket.send_bytes(audio_chunk)
-                    chunk_count += 1
-                except Exception as e:
-                    logger.error(f"Send audio error: {e}")
-                    break
-            
-            # CRITICAL: Small delay to ensure chunks are received before next sentence
-            await asyncio.sleep(0.05)
-            
-            logger.info(f"✅ Completed TTS - sent {chunk_count} chunks for: {text[:60]}...")
-                
-        except asyncio.CancelledError:
-            logger.info(f"TTS task cancelled: {text[:30]}...")
-        except Exception as e:
-            logger.error(f"Sentence audio error: {e}", exc_info=True)
     
     async def silence_monitor(self):
         """Monitor for prolonged silence"""
@@ -458,7 +444,5 @@ class VoiceStreamHandler:
         self.is_processing = False
         self.is_connected = False
         
-        # Cancel any remaining TTS tasks
-        for task in self.tts_tasks:
-            if not task.done():
-                task.cancel()
+        if self.tts_task and not self.tts_task.done():
+            self.tts_task.cancel()
