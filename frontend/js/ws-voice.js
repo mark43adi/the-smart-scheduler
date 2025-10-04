@@ -173,12 +173,15 @@ class WebSocketVoiceManager {
                 break;
 
             case 'audio_complete':
-                console.log('🔊 Audio stream complete');
+                console.log('🔊 Audio stream complete - signaling end');
                 
                 // Finalize current sentence buffer if exists
                 if (this.currentSentenceBuffer.length > 0) {
                     await this.finalizeSentence();
                 }
+                
+                // Mark that no more audio is coming
+                this.isAISpeaking = false;
                 
                 const endTime = Date.now();
                 if (this.responseStartTime) {

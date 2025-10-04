@@ -300,11 +300,8 @@ class VoiceStreamHandler:
                         cleaned = clean_response_for_tts(sentence_buffer.strip())
                         
                         if cleaned and len(cleaned) > 15:  # Min 15 chars
-                            # Create TTS task and track it
-                            task = asyncio.create_task(
-                                self.stream_sentence_audio(cleaned)
-                            )
-                            self.tts_tasks.append(task)
+                            # WAIT for TTS to complete before moving on
+                            await self.stream_sentence_audio(cleaned)
                             
                             sentence_buffer = ""
                             word_count = 0
@@ -314,19 +311,14 @@ class VoiceStreamHandler:
                     if sentence_buffer.strip():
                         cleaned = clean_response_for_tts(sentence_buffer.strip())
                         if cleaned:
-                            task = asyncio.create_task(
-                                self.stream_sentence_audio(cleaned)
-                            )
-                            self.tts_tasks.append(task)
-                    
-                    # Wait for all TTS tasks to complete
-                    if self.tts_tasks:
-                        await asyncio.gather(*self.tts_tasks, return_exceptions=True)
-                        self.tts_tasks.clear()
+                            await self.stream_sentence_audio(cleaned)
                 
                 elif chunk_type == 'error':
                     await self.send_error("Failed to process request")
                     return
+            
+            # CRITICAL: Wait a moment to ensure all audio chunks are sent
+            await asyncio.sleep(0.3)
             
             # Send complete text for display
             if not self.interrupt_flag:
@@ -336,6 +328,7 @@ class VoiceStreamHandler:
                     "text": cleaned_full
                 })
                 
+                # Now signal audio is truly complete
                 await self.send_message({"type": "audio_complete"})
             
             self.is_ai_speaking = False
